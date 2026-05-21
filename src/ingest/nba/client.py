@@ -20,6 +20,7 @@ from nba_api.stats.endpoints import (
 )
 from nba_api.live.nba.endpoints import scoreboard as live_scoreboard
 from nba_api.stats.static import teams as static_teams, players as static_players
+import requests.exceptions
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from src.core.logging import get_logger
@@ -34,7 +35,7 @@ def _sleep() -> None:
 
 
 @retry(
-    retry=retry_if_exception_type(Exception),
+    retry=retry_if_exception_type(requests.exceptions.RequestException),
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=1, min=2, max=30),
     reraise=True,
@@ -55,7 +56,7 @@ def get_league_game_finder(
 
 
 @retry(
-    retry=retry_if_exception_type(Exception),
+    retry=retry_if_exception_type(requests.exceptions.RequestException),
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=1, min=2, max=30),
     reraise=True,
@@ -71,7 +72,7 @@ def get_box_score_traditional(game_id: str) -> tuple[list[dict[str, Any]], list[
 
 
 @retry(
-    retry=retry_if_exception_type(Exception),
+    retry=retry_if_exception_type(requests.exceptions.RequestException),
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=1, min=2, max=30),
     reraise=True,
@@ -85,7 +86,7 @@ def get_box_score_advanced(game_id: str) -> tuple[list[dict[str, Any]], list[dic
 
 
 @retry(
-    retry=retry_if_exception_type(Exception),
+    retry=retry_if_exception_type(requests.exceptions.RequestException),
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=1, min=2, max=30),
     reraise=True,
@@ -98,7 +99,7 @@ def get_play_by_play(game_id: str) -> list[dict[str, Any]]:
 
 
 @retry(
-    retry=retry_if_exception_type(Exception),
+    retry=retry_if_exception_type(requests.exceptions.RequestException),
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=1, min=2, max=30),
     reraise=True,

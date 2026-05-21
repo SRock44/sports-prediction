@@ -45,12 +45,13 @@ def needs_rehash(hashed: str) -> bool:
 # ── JWT utilities ─────────────────────────────────────────────────────────────
 
 def create_access_token(subject: str, scopes: list[str], extra: dict[str, Any] | None = None) -> str:
-    expire = utc_now() + timedelta(minutes=settings.jwt_access_token_expire_minutes)
+    now = utc_now()
+    expire = now + timedelta(minutes=settings.jwt_access_token_expire_minutes)
     payload: dict[str, Any] = {
         "sub": subject,
         "scopes": scopes,
-        "exp": expire,
-        "iat": utc_now(),
+        "exp": int(expire.timestamp()),
+        "iat": int(now.timestamp()),
     }
     if extra:
         payload.update(extra)

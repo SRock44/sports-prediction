@@ -16,6 +16,7 @@ from tenacity import (
     wait_exponential,
     before_sleep_log,
 )
+from sqlalchemy import literal_column
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -148,9 +149,15 @@ class Upserter:
             stmt = stmt.on_conflict_do_update(
                 index_elements=self._conflict_columns,
                 set_=update_cols,
-            )
-            self._session.execute(stmt)
-            result.rows_inserted += len(chunk)
+            # xmax = 0 means the row was freshly inserted; non-zero means it was updated.
+            ).returning(literal_column("(xmax = 0)::bool").label("was_inserted"))
+
+            rows_returned = self._session.execute(stmt).fetchall()
+            for row_result in rows_returned:
+                if row_result.was_inserted:
+                    result.rows_inserted += 1
+                else:
+                    result.rows_updated += 1
 
         return result
 
@@ -161,4 +168,4 @@ def dict_hash(d: dict[str, Any]) -> str:
     """Stable SHA-256 of a JSON-serialisable dict. Used for features_hash."""
     import json
     serialised = json.dumps(d, sort_keys=True, default=str)
-    return hashlib.sha256(serialised.encode()).hexdigest()[:16]
+    return hashlib.sha256(serialised.encode()).hexdigest()

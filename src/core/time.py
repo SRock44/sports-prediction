@@ -32,7 +32,8 @@ def as_of_for_game(scheduled_utc: datetime) -> datetime:
 
 def nba_season_for_date(d: date) -> int:
     """Return the NBA season year for a given date.
-    NBA seasons start in October; we label by the year the Finals are played.
+    NBA seasons start in October; we label by the calendar year in which the season begins.
+    This matches the nba_api convention: 2024 → '2024-25'.
     """
     return d.year if d.month >= 10 else d.year - 1
 

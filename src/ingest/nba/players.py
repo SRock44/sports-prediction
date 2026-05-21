@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import re
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Any
 
 import httpx
@@ -113,8 +114,8 @@ def ingest_injury_report(session: Session) -> IngestResult:
     result = IngestResult()
     sport = _get_or_create_sport(session)
 
-    # Try common publish times (ET): 5pm and 6:30pm → we try both
-    today = utc_now().strftime("%Y-%m-%d")
+    # Injury report dates are Eastern Time (the NBA's timezone for publishing).
+    today = datetime.now(tz=ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     candidate_urls = [
         _INJURY_REPORT_URL_TEMPLATE.format(date=today, time="0500PM"),
         _INJURY_REPORT_URL_TEMPLATE.format(date=today, time="0630PM"),

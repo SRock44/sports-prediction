@@ -110,6 +110,7 @@ class Game(Base):
     venue: Mapped[Venue | None] = relationship("Venue", back_populates="games")
     team_stats: Mapped[list[TeamGameStats]] = relationship("TeamGameStats", back_populates="game")
     player_stats: Mapped[list[PlayerGameStats]] = relationship("PlayerGameStats", back_populates="game")
+    plays: Mapped[list[Play]] = relationship("Play", back_populates="game")
     lineups: Mapped[list[Lineup]] = relationship("Lineup", back_populates="game")
     predictions: Mapped[list[Prediction]] = relationship("Prediction", back_populates="game")
 
@@ -125,6 +126,8 @@ class TeamGameStats(Base):
 
     game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), primary_key=True)
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), primary_key=True)
+    # recorded_at is required as the TimescaleDB hypertable time dimension.
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     stats: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
     game: Mapped[Game] = relationship("Game", back_populates="team_stats")
@@ -137,11 +140,37 @@ class PlayerGameStats(Base):
     game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), primary_key=True)
     player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), primary_key=True)
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), nullable=False)
+    # recorded_at is required as the TimescaleDB hypertable time dimension.
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     stats: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
     game: Mapped[Game] = relationship("Game", back_populates="player_stats")
     player: Mapped[Player] = relationship("Player")
     team: Mapped[Team] = relationship("Team")
+
+
+class Play(Base):
+    """Individual play-by-play event. Intended as a TimescaleDB hypertable on occurred_at."""
+    __tablename__ = "plays"
+    __table_args__ = (UniqueConstraint("game_id", "action_number"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), nullable=False, index=True)
+    # occurred_at is the TimescaleDB hypertable time dimension.
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    action_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    period: Mapped[int] = mapped_column(Integer, nullable=False)
+    clock: Mapped[str | None] = mapped_column(String(16))   # "PT08M32.00S"
+    action_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    sub_type: Mapped[str | None] = mapped_column(String(64))
+    team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id"), index=True)
+    player_id: Mapped[int | None] = mapped_column(ForeignKey("players.id"), index=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    score_home: Mapped[int | None] = mapped_column(Integer)
+    score_away: Mapped[int | None] = mapped_column(Integer)
+    raw: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+    game: Mapped[Game] = relationship("Game", back_populates="plays")
 
 
 class Lineup(Base):

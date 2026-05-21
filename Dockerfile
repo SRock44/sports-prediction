@@ -14,7 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install pip deps into a prefix we can copy
+# src/ must be present so the package metadata can be resolved during install.
 COPY pyproject.toml .
+COPY src/ ./src/
 RUN pip install --upgrade pip && \
     pip install --prefix=/install --no-cache-dir ".[dev]"
 

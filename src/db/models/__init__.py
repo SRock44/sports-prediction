@@ -14,6 +14,7 @@ from src.db.models.sport import (
     Game,
     Injury,
     Lineup,
+    Play,
     Player,
     PlayerGameStats,
     Sport,
@@ -24,7 +25,7 @@ from src.db.models.sport import (
 
 __all__ = [
     "Base", "ApiKey", "ApiRequest", "DriftEvent", "Game", "Injury",
-    "Lineup", "MatchupFeature", "ModelRecord", "Player", "PlayerFeature",
+    "Lineup", "MatchupFeature", "ModelRecord", "Play", "Player", "PlayerFeature",
     "PlayerGameStats", "Prediction", "PredictionAudit", "Sport", "Team",
     "TeamFeature", "TeamGameStats", "Venue",
 ]

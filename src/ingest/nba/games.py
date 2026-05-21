@@ -8,8 +8,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from src.core.logging import get_logger
-from src.core.time import nba_season_for_date, ensure_utc
-from src.db.models import Game, Sport, Team, Venue, TeamGameStats, PlayerGameStats, Player
+from src.core.time import nba_season_for_date, ensure_utc, utc_now
+from src.db.models import Game, Sport, Team, Venue, TeamGameStats, PlayerGameStats, Player, Play
 from src.ingest.common import IngestResult, Upserter
 from src.ingest.nba.client import (
     get_league_game_finder,
@@ -47,16 +47,16 @@ def ingest_season_schedule(session: Session, season_year: int) -> IngestResult:
             result.errors.append(str(exc))
             continue
 
-        # LeagueGameFinder returns one row per team per game; deduplicate by GAME_ID
-        seen: set[str] = set()
+        # LeagueGameFinder returns one row per team per game; group both rows by GAME_ID
+        # so we can correctly distinguish home (MATCHUP contains "vs.") from away ("@").
+        games_map: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
             game_id_ext = str(row["GAME_ID"])
-            if game_id_ext in seen:
-                continue
-            seen.add(game_id_ext)
+            games_map.setdefault(game_id_ext, []).append(row)
 
+        for game_id_ext, team_rows in games_map.items():
             try:
-                _upsert_game_row(session, sport, row, season_year)
+                _upsert_game_row(session, sport, game_id_ext, team_rows, season_year)
                 result.rows_inserted += 1
                 result.last_external_id = game_id_ext
             except Exception as exc:
@@ -67,17 +67,28 @@ def ingest_season_schedule(session: Session, season_year: int) -> IngestResult:
     return result
 
 
-def _upsert_game_row(session: Session, sport: Sport, row: dict[str, Any], season_year: int) -> None:
-    game_id_ext = str(row["GAME_ID"])
+def _upsert_game_row(
+    session: Session,
+    sport: Sport,
+    game_id_ext: str,
+    team_rows: list[dict[str, Any]],
+    season_year: int,
+) -> None:
+    # NBA MATCHUP format: "LAL vs. GSW" (home team row) or "GSW @ LAL" (away team row)
+    home_row = next((r for r in team_rows if "vs." in r.get("MATCHUP", "")), None)
+    away_row = next((r for r in team_rows if " @ " in r.get("MATCHUP", "")), None)
 
-    # Resolve teams by external_id
-    home_team = _resolve_team(session, sport, row, home=True)
-    away_team = _resolve_team(session, sport, row, home=False)
+    if home_row is None or away_row is None:
+        log.warning("nba.games.matchup_parse_failed", game_id=game_id_ext,
+                    matchups=[r.get("MATCHUP") for r in team_rows])
+        return
+
+    home_team = _resolve_team(session, sport, home_row)
+    away_team = _resolve_team(session, sport, away_row)
     if home_team is None or away_team is None:
         return
 
-    # Parse game date
-    game_date_str: str = row.get("GAME_DATE", "")
+    game_date_str: str = home_row.get("GAME_DATE", "")
     try:
         scheduled_utc = ensure_utc(
             datetime.strptime(game_date_str, "%Y-%m-%dT%H:%M:%S")
@@ -87,6 +98,9 @@ def _upsert_game_row(session: Session, sport: Sport, row: dict[str, Any], season
     except ValueError:
         scheduled_utc = datetime.now(timezone.utc)
 
+    now_utc = datetime.now(timezone.utc)
+    status = "final" if scheduled_utc <= now_utc else "scheduled"
+
     existing = session.query(Game).filter_by(sport_id=sport.id, external_id=game_id_ext).first()
     if existing is None:
         game = Game(
@@ -94,19 +108,22 @@ def _upsert_game_row(session: Session, sport: Sport, row: dict[str, Any], season
             external_id=game_id_ext,
             season=season_year,
             scheduled_utc=scheduled_utc,
-            status="final",
+            status=status,
             home_team_id=home_team.id,
             away_team_id=away_team.id,
-            meta={"season_type": row.get("SEASON_TYPE", "")},
+            home_score=home_row.get("PTS") if status == "final" else None,
+            away_score=away_row.get("PTS") if status == "final" else None,
+            meta={"season_type": home_row.get("SEASON_TYPE", "")},
         )
         session.add(game)
     else:
-        existing.home_score = row.get("PTS") if row.get("MATCHUP", "").find("vs.") != -1 else None
-        existing.status = "final"
+        if status == "final":
+            existing.status = "final"
+            existing.home_score = home_row.get("PTS")
+            existing.away_score = away_row.get("PTS")
 
 
-def _resolve_team(session: Session, sport: Sport, row: dict[str, Any], home: bool) -> Team | None:
-    matchup: str = row.get("MATCHUP", "")
+def _resolve_team(session: Session, sport: Sport, row: dict[str, Any]) -> Team | None:
     team_abbrev: str = row.get("TEAM_ABBREVIATION", "")
     team_id_ext: str = str(row.get("TEAM_ID", ""))
 
@@ -177,6 +194,7 @@ def ingest_box_scores(session: Session, game_ext_id: str) -> IngestResult:
                 game_id=game.id,
                 player_id=player.id,
                 team_id=team.id if team else game.home_team_id,
+                recorded_at=utc_now(),
                 stats=stats,
             )
             session.add(pgs)
@@ -196,7 +214,11 @@ def ingest_box_scores(session: Session, game_ext_id: str) -> IngestResult:
             game_id=game.id, team_id=team.id
         ).first()
         if existing_tgs is None:
-            tgs = TeamGameStats(game_id=game.id, team_id=team.id, stats={"traditional": row})
+            tgs = TeamGameStats(
+                game_id=game.id, team_id=team.id,
+                recorded_at=utc_now(),
+                stats={"traditional": row},
+            )
             session.add(tgs)
         else:
             existing_tgs.stats = {"traditional": row}

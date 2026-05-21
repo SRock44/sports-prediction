@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Generator
+from contextlib import contextmanager
 
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -55,6 +56,7 @@ sync_session_factory: sessionmaker[Session] = sessionmaker(
 )
 
 
+@contextmanager
 def get_sync_session() -> Generator[Session, None, None]:
     """Context-manager-style session for Celery tasks."""
     with sync_session_factory() as session:

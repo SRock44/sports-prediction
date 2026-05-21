@@ -9,11 +9,13 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -70,7 +72,20 @@ class ModelRecord(Base):
 class Prediction(Base):
     __tablename__ = "predictions"
     __table_args__ = (
-        UniqueConstraint("game_id", "model_id", "target", "player_id"),
+        # PostgreSQL treats NULLs as distinct in UniqueConstraint, allowing duplicate
+        # team-level predictions (player_id IS NULL). Use two partial indexes instead.
+        Index(
+            "uq_predictions_team_level",
+            "game_id", "model_id", "target",
+            unique=True,
+            postgresql_where=text("player_id IS NULL"),
+        ),
+        Index(
+            "uq_predictions_player_level",
+            "game_id", "model_id", "target", "player_id",
+            unique=True,
+            postgresql_where=text("player_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
