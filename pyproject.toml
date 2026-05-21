@@ -107,3 +107,6 @@ ignore_missing_imports = true
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--tb=short -q"
+markers = [
+    "integration: requires live Postgres + Redis containers (via testcontainers)",
+]
