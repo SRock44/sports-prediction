@@ -1,0 +1,30 @@
+# Replace example.com with your actual domain.
+# For local dev, use http://localhost and remove tls directives.
+
+example.com {
+    tls {
+        protocols tls1.3
+    }
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        Content-Security-Policy "default-src 'none'"
+        -Server
+    }
+
+    # Forward all traffic to the FastAPI container
+    reverse_proxy api:8000 {
+        health_uri /v1/health
+        health_interval 30s
+    }
+
+    # HTTP → HTTPS redirect is automatic with Caddy
+    log {
+        output stdout
+        format json
+    }
+}
