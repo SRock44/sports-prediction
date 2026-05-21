@@ -185,6 +185,10 @@ def ingest_box_scores(session: Session, game_ext_id: str) -> IngestResult:
 
         team_id_ext = str(stats.get("traditional", {}).get("teamId", ""))
         team = session.query(Team).filter_by(sport_id=sport.id, external_id=team_id_ext).first()
+        if team is None:
+            log.warning("nba.box_score.player_team_not_found", game=game_ext_id, player=pid,
+                        team_ext_id=team_id_ext)
+            continue
 
         existing_pgs = session.query(PlayerGameStats).filter_by(
             game_id=game.id, player_id=player.id
@@ -193,7 +197,7 @@ def ingest_box_scores(session: Session, game_ext_id: str) -> IngestResult:
             pgs = PlayerGameStats(
                 game_id=game.id,
                 player_id=player.id,
-                team_id=team.id if team else game.home_team_id,
+                team_id=team.id,
                 recorded_at=utc_now(),
                 stats=stats,
             )
@@ -203,12 +207,21 @@ def ingest_box_scores(session: Session, game_ext_id: str) -> IngestResult:
             existing_pgs.stats = stats
             result.rows_updated += 1
 
-    # Team stats
+    # Index advanced team stats by teamId for merge below
+    team_adv_map: dict[str, dict[str, Any]] = {
+        str(r.get("teamId", "")): r for r in team_adv
+    }
+
+    # Team stats — merge traditional + advanced
     for row in team_trad:
         team_id_ext = str(row.get("teamId", ""))
         team = session.query(Team).filter_by(sport_id=sport.id, external_id=team_id_ext).first()
         if team is None:
             continue
+
+        merged_stats: dict[str, Any] = {"traditional": row}
+        if team_id_ext in team_adv_map:
+            merged_stats["advanced"] = team_adv_map[team_id_ext]
 
         existing_tgs = session.query(TeamGameStats).filter_by(
             game_id=game.id, team_id=team.id
@@ -217,11 +230,11 @@ def ingest_box_scores(session: Session, game_ext_id: str) -> IngestResult:
             tgs = TeamGameStats(
                 game_id=game.id, team_id=team.id,
                 recorded_at=utc_now(),
-                stats={"traditional": row},
+                stats=merged_stats,
             )
             session.add(tgs)
         else:
-            existing_tgs.stats = {"traditional": row}
+            existing_tgs.stats = merged_stats
 
     session.flush()
     return result

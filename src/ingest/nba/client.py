@@ -118,7 +118,7 @@ def get_all_teams() -> list[dict[str, Any]]:
 
 def get_all_players(is_only_current_season: bool = False) -> list[dict[str, Any]]:
     """Static player list from nba_api."""
-    return static_players.get_players()  # type: ignore[return-value]
+    return static_players.get_players(is_only_current_season)  # type: ignore[return-value]
 
 
 def get_live_scoreboard() -> dict[str, Any]:

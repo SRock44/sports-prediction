@@ -12,7 +12,9 @@ example.com {
         X-Content-Type-Options "nosniff"
         X-Frame-Options "DENY"
         Referrer-Policy "no-referrer"
-        Content-Security-Policy "default-src 'none'"
+        # Swagger UI (/docs, /redoc) requires inline scripts/styles and CDN assets.
+        # Tighten or remove the script/style exceptions once docs are disabled in prod.
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' cdn.jsdelivr.net; img-src 'self' data:; font-src 'self' cdn.jsdelivr.net; connect-src 'self'"
         -Server
     }
 
