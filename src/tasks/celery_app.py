@@ -35,7 +35,7 @@ app.conf.update(
         "src.tasks.ingest_tasks.*": {"queue": "default"},
         "src.tasks.feature_tasks.*": {"queue": "default"},
         "src.tasks.score_tasks.*": {"queue": "default"},
-        "*.high_priority.*": {"queue": "high_priority"},
+        # Tasks that need the high_priority queue pass queue= explicitly via apply_async.
     },
     beat_schedule_filename="celerybeat-schedule",
 )

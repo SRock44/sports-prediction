@@ -42,7 +42,13 @@ def generate_winner_backtest_report(
         log.info("backtest.fold", sport=sport, val_season=val_season, train_n=len(train_df))
 
         try:
-            # Quick train (fewer optuna trials for backtest speed)
+            # Use a separate MLflow experiment so backtest runs don't pollute
+            # the production experiment that promote_model queries.
+            import mlflow
+            from src.core.config import settings
+            mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
+            mlflow.set_experiment(f"{settings.mlflow_experiment_name}_backtest")
+
             run_id, _ = train_winner_model(
                 sport=sport,
                 training_df=train_df,

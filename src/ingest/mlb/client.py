@@ -9,6 +9,7 @@ import time
 from datetime import date, timedelta
 from typing import Any
 
+import requests.exceptions
 import statsapi
 import pybaseball
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -28,7 +29,7 @@ def _sleep() -> None:
 # ── Schedule / games ─────────────────────────────────────────────────────────
 
 @retry(
-    retry=retry_if_exception_type(Exception),
+    retry=retry_if_exception_type(requests.exceptions.RequestException),
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=1, min=2, max=30),
     reraise=True,
@@ -44,7 +45,7 @@ def get_schedule(start_date: str, end_date: str, sport_id: int = 1) -> list[dict
 
 
 @retry(
-    retry=retry_if_exception_type(Exception),
+    retry=retry_if_exception_type(requests.exceptions.RequestException),
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=1, min=2, max=30),
     reraise=True,
@@ -55,7 +56,7 @@ def get_boxscore(game_pk: int) -> dict[str, Any]:
 
 
 @retry(
-    retry=retry_if_exception_type(Exception),
+    retry=retry_if_exception_type(requests.exceptions.RequestException),
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=1, min=2, max=30),
     reraise=True,
@@ -67,7 +68,7 @@ def get_live_feed(game_pk: int) -> dict[str, Any]:
 
 
 @retry(
-    retry=retry_if_exception_type(Exception),
+    retry=retry_if_exception_type(requests.exceptions.RequestException),
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=1, min=2, max=30),
     reraise=True,
@@ -82,7 +83,7 @@ def get_roster(team_id: int, season: int) -> list[dict[str, Any]]:
 
 
 @retry(
-    retry=retry_if_exception_type(Exception),
+    retry=retry_if_exception_type(requests.exceptions.RequestException),
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=1, min=2, max=30),
     reraise=True,

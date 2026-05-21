@@ -98,7 +98,7 @@ def build_team_features(
         feats[f"pace_last{w}"] = rolling_mean(paces, w) or 100.0
 
     # ── Rest & fatigue flags ──────────────────────────────────────────────────
-    most_recent_game = sorted(game_dates)[0] if game_dates else None
+    most_recent_game = max(game_dates) if game_dates else None
     rest_days = (as_of_utc - most_recent_game).total_seconds() / 86400 if most_recent_game else 3.0
     feats["rest_days"] = min(rest_days, 10.0)  # cap at 10
 

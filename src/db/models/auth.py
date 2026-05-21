@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -13,9 +13,12 @@ from src.db.models.base import Base
 
 class ApiKey(Base):
     __tablename__ = "api_keys"
+    __table_args__ = (Index("ix_api_keys_key_prefix", "key_prefix"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # First 8 chars of the plaintext key stored for fast pre-filtering before Argon2.
+    key_prefix: Mapped[str | None] = mapped_column(String(8))
     key_hash: Mapped[str] = mapped_column(String(256), nullable=False, unique=True)
     scopes: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -57,10 +57,11 @@ def train_winner_model(
     X_hold = holdout_df[feature_names].values.astype(np.float32)
     y_hold = holdout_df["target"].values.astype(int)
 
-    # Sample weights: exponential decay
-    now = utc_now()
+    # Sample weights: exponential decay anchored to the last date in the training set
+    # so the same historical data always produces the same weights regardless of run date.
+    anchor = pd.to_datetime(training_df["scheduled_utc"].max(), utc=True)
     def make_weights(df: pd.DataFrame) -> np.ndarray:
-        days_ago = (now - pd.to_datetime(df["scheduled_utc"])).dt.total_seconds() / 86400
+        days_ago = (anchor - pd.to_datetime(df["scheduled_utc"], utc=True)).dt.total_seconds() / 86400
         return np.array([exponential_decay_weight(d, lam) for d in days_ago], dtype=np.float32)
 
     w_train = make_weights(train_part)
@@ -82,7 +83,7 @@ def train_winner_model(
             **params,
             objective="binary:logistic",
             eval_metric="logloss",
-            use_label_encoder=False,
+
             tree_method="hist",
             random_state=42,
         )

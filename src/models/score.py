@@ -1,7 +1,6 @@
 """Batch scoring: load active model, run inference on upcoming games, write predictions."""
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -14,6 +13,7 @@ from sqlalchemy.orm import Session
 from src.core.logging import get_logger
 from src.core.time import utc_now, as_of_for_game
 from src.db.models import Game, Sport, ModelRecord, Prediction, PredictionAudit
+from src.ingest.common import dict_hash
 from src.models.registry import load_model
 
 log = get_logger(__name__)
@@ -132,10 +132,15 @@ def _score_game_winner(
         )
         session.add(audit)
 
-        # Notify via PG LISTEN/NOTIFY
+        # Notify via PG LISTEN/NOTIFY — payload contract must match listener.py
         session.execute(
             text("SELECT pg_notify('predictions_channel', :payload)"),
-            {"payload": json.dumps({"prediction_id": pred.id, "game_id": game.id})},
+            {"payload": json.dumps({
+                "game_id": game.id,
+                "target": "home_won",
+                "probability": float(round(proba_home_win, 4)),
+                "is_lineup_update": False,
+            })},
         )
         return 1
     else:
@@ -159,5 +164,4 @@ def load_model_feature_names(run_id: str) -> str:
 
 
 def _hash_features(features: dict[str, Any]) -> str:
-    serialised = json.dumps(features, sort_keys=True, default=str)
-    return hashlib.sha256(serialised.encode()).hexdigest()[:16]
+    return dict_hash(features)

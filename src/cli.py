@@ -129,21 +129,28 @@ def train(
         typer.echo(f"  Metrics: {metrics}")
 
         if promote:
+            from src.db.models import ModelRecord, Sport as SportModel
+            from src.features.common import feature_spec_hash as compute_fsh
             with get_sync_session() as session:
-                from src.db.models import ModelRecord, Sport
-                sport_obj = session.query(Sport).filter_by(code=sport).first()
+                sport_obj = session.query(SportModel).filter_by(code=sport).first()
                 champion = (
                     session.query(ModelRecord)
                     .filter_by(sport_id=sport_obj.id if sport_obj else 0, kind="winner", active=True)
                     .first()
                 ) if sport_obj else None
                 champion_metrics = champion.metrics if champion else {}
+                sport_id = sport_obj.id if sport_obj else None
 
             ok, reason = should_promote(metrics, champion_metrics)
-            if ok:
+            if ok and sport_id is not None:
                 from src.models.registry import promote_model
                 with get_sync_session() as session:
-                    promote_model(session, run_id, sport, kind, "home_win", feature_names)
+                    promote_model(
+                        session, run_id, sport_id, kind, "home_won",
+                        version=run_id[:12],
+                        metrics=metrics,
+                        feature_spec_hash=compute_fsh(feature_names),
+                    )
                     session.commit()
                 typer.echo(f"  Promoted. {reason}")
             else:
@@ -295,8 +302,10 @@ def keys_create(
     with get_sync_session() as session:
         key = ApiKey(
             name=name,
+            key_prefix=plaintext[:8],
             key_hash=hashed,
             scopes=scope_list,
+            created_at=datetime.now(timezone.utc),
             expires_at=expires_at,
         )
         session.add(key)
@@ -396,11 +405,19 @@ def model_rollback(
     from src.models.registry import rollback_model
     from src.db.session import get_sync_session
 
+    from src.db.models import Sport as SportModel
     with get_sync_session() as session:
-        rollback_model(session, sport, kind, "home_win")
+        sport_obj = session.query(SportModel).filter_by(code=sport).first()
+        if sport_obj is None:
+            typer.echo(f"Sport '{sport}' not found.", err=True)
+            raise typer.Exit(1)
+        success = rollback_model(session, sport_obj.id, kind, "home_won")
         session.commit()
 
-    typer.echo(f"Rolled back {sport.upper()} {kind} model.")
+    if success:
+        typer.echo(f"Rolled back {sport.upper()} {kind} model.")
+    else:
+        typer.echo(f"No previous model to roll back to.", err=True)
 
 
 @model_app.command("promote")
@@ -414,8 +431,30 @@ def model_promote(
     from src.models.registry import promote_model
     from src.db.session import get_sync_session
 
+    from src.db.models import Sport as SportModel
+    from src.models.registry import get_run_metrics
+    from src.features.common import feature_spec_hash as compute_fsh
+    from src.models.score import load_model_feature_names
+    import json
+
     with get_sync_session() as session:
-        promote_model(session, run_id, sport, kind, target, feature_names=[])
+        sport_obj = session.query(SportModel).filter_by(code=sport).first()
+        if sport_obj is None:
+            typer.echo(f"Sport '{sport}' not found.", err=True)
+            raise typer.Exit(1)
+
+        run_metrics = get_run_metrics(run_id)
+        try:
+            feat_names = json.loads(load_model_feature_names(run_id))
+        except Exception:
+            feat_names = []
+
+        promote_model(
+            session, run_id, sport_obj.id, kind, target,
+            version=run_id[:12],
+            metrics=run_metrics,
+            feature_spec_hash=compute_fsh(feat_names),
+        )
         session.commit()
 
     typer.echo(f"Promoted run {run_id[:12]}… as active {sport} {kind} model.")

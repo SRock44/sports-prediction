@@ -31,11 +31,14 @@ async def exchange_token(
     """Exchange a long-lived API key for a short-lived JWT."""
     from sqlalchemy import select
 
-    # We can't look up by hash directly; iterate over non-revoked, non-expired keys.
-    # In practice, prefix the key with an 8-char ID to allow direct lookup.
+    # Narrow candidates by the 8-char key_prefix before running slow Argon2 verify.
+    # Keys created before this column existed have key_prefix=NULL; fall back to
+    # full scan only for those rows so legacy keys keep working after migration.
+    prefix = body.api_key[:8]
     result = await session.execute(
         select(ApiKey).where(
             ApiKey.revoked_at.is_(None),
+            (ApiKey.key_prefix == prefix) | ApiKey.key_prefix.is_(None),
         )
     )
     candidates = result.scalars().all()

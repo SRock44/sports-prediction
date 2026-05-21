@@ -13,6 +13,7 @@ from starlette_prometheus import PrometheusMiddleware, metrics as prometheus_met
 from src.core.config import settings
 from src.core.logging import configure_logging, get_logger
 from src.api.routes import games, predictions, models, health
+from src.api import auth
 
 log = get_logger(__name__)
 
@@ -110,6 +111,7 @@ from typing import Any  # noqa: E402
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(health.router, prefix="/v1")
+app.include_router(auth.router, prefix="/v1")
 app.include_router(games.router, prefix="/v1")
 app.include_router(predictions.router, prefix="/v1")
 app.include_router(models.router, prefix="/v1")

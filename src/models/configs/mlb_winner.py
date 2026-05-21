@@ -19,7 +19,10 @@ MLB_WINNER_FEATURES = [
     "home_woba_last15",
     "home_k_pct_last5",
     "home_k_pct_last10",
+    "home_k_pct_last15",
     "home_bb_pct_last5",
+    "home_bb_pct_last10",
+    "home_bb_pct_last15",
     "home_win_pct_last10",
     "home_rest_days",
     # ── Away team ─────────────────────────────────────────────────────────────
@@ -40,7 +43,10 @@ MLB_WINNER_FEATURES = [
     "away_woba_last15",
     "away_k_pct_last5",
     "away_k_pct_last10",
+    "away_k_pct_last15",
     "away_bb_pct_last5",
+    "away_bb_pct_last10",
+    "away_bb_pct_last15",
     "away_win_pct_last10",
     "away_rest_days",
     # ── Starting pitchers ─────────────────────────────────────────────────────

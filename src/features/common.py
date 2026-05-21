@@ -179,4 +179,4 @@ def feature_spec_hash(feature_names: list[str]) -> str:
     """Stable hash of the feature name list. Detects schema drift."""
     import hashlib
     joined = "|".join(sorted(feature_names))
-    return hashlib.sha256(joined.encode()).hexdigest()[:16]
+    return hashlib.sha256(joined.encode()).hexdigest()

@@ -40,9 +40,20 @@ async def health() -> dict[str, Any]:
         checks["status"] = "degraded"
 
     # ── Last ingest freshness ─────────────────────────────────────────────────
+    # NBA regular season: Oct–Jun. MLB: Apr–Oct. Outside those windows the
+    # freshness check is skipped and reported as "offseason".
+    _NBA_IN_SEASON_MONTHS = frozenset(range(1, 7)) | frozenset(range(10, 13))  # Oct-Jun
+    _MLB_IN_SEASON_MONTHS = frozenset(range(4, 11))                             # Apr-Oct
+    _SEASON_MONTHS = {"nba": _NBA_IN_SEASON_MONTHS, "mlb": _MLB_IN_SEASON_MONTHS}
+
     try:
         async with async_session_factory() as session:
+            now = utc_now()
             for sport in ("nba", "mlb"):
+                if now.month not in _SEASON_MONTHS[sport]:
+                    checks["checks"][f"{sport}_ingest_fresh"] = "offseason"
+                    continue
+
                 row = await session.execute(
                     text("""
                         SELECT MAX(g.scheduled_utc) as last_game
@@ -53,13 +64,16 @@ async def health() -> dict[str, Any]:
                 )
                 last = row.scalar()
                 if last is not None:
-                    age_hours = (utc_now() - last).total_seconds() / 3600
+                    age_hours = (now - last).total_seconds() / 3600
                     checks["checks"][f"{sport}_ingest_age_hours"] = round(age_hours, 1)
                     if age_hours > 25:
                         checks["status"] = "degraded"
                         checks["checks"][f"{sport}_ingest_fresh"] = False
                     else:
                         checks["checks"][f"{sport}_ingest_fresh"] = True
+                else:
+                    checks["status"] = "degraded"
+                    checks["checks"][f"{sport}_ingest_fresh"] = False
     except Exception as exc:
         checks["checks"]["ingest_check"] = f"ERROR: {exc}"
 

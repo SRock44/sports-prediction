@@ -25,27 +25,22 @@ def should_send(
 ) -> bool:
     """Return True if the notification should be sent.
 
-    Always True when is_lineup_update is set.
-    Otherwise True only if: first send OR probability shifted >= 3 pp.
+    Does NOT record the send — call record_send() only after successful delivery.
     """
     if is_lineup_update:
-        _record_send(r, game_id, target, current_prob)
         return True
 
     key = _key(game_id, target)
     raw = r.get(key)
     if raw is None:
-        _record_send(r, game_id, target, current_prob)
         return True
 
     try:
         last_prob = float(raw)
     except (ValueError, TypeError):
-        _record_send(r, game_id, target, current_prob)
         return True
 
     if abs(current_prob - last_prob) >= _MIN_PROB_SHIFT:
-        _record_send(r, game_id, target, current_prob)
         return True
 
     log.debug(
@@ -58,14 +53,24 @@ def should_send(
     return False
 
 
+def record_send(
+    r: redis.Redis,
+    game_id: str | int,
+    target: str,
+    prob: float,
+) -> None:
+    """Record a successful send. Call this only after delivery is confirmed."""
+    key = _key(game_id, target)
+    r.set(key, str(prob), ex=_TTL_SECONDS)
+
+
 def _record_send(
     r: redis.Redis,
     game_id: str | int,
     target: str,
     prob: float,
 ) -> None:
-    key = _key(game_id, target)
-    r.set(key, str(prob), ex=_TTL_SECONDS)
+    record_send(r, game_id, target, prob)
 
 
 def _key(game_id: str | int, target: str) -> str:

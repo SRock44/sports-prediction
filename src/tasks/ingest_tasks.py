@@ -1,41 +1,79 @@
 """Celery ingest tasks: daily box scores, injury refresh, live polling."""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from celery import shared_task
 
 from src.core.logging import get_logger
 from src.db.session import sync_session_factory
+from src.ingest.common import IngestResult
 
 log = get_logger(__name__)
 
 
 @shared_task(name="src.tasks.ingest_tasks.ingest_yesterday_nba", bind=True, max_retries=3)
 def ingest_yesterday_nba(self: Any) -> dict:
-    from src.ingest.nba.games import ingest_season_schedule, ingest_box_scores
-    from src.core.time import nba_season_for_date
-    yesterday = date.today() - timedelta(days=1)
-    season = nba_season_for_date(yesterday)
+    """Ingest box scores only for games completed yesterday — not the whole season."""
+    from src.ingest.nba.games import ingest_box_scores
+    from src.db.models import Game, Sport
 
+    yesterday = date.today() - timedelta(days=1)
+    day_start = datetime(yesterday.year, yesterday.month, yesterday.day, tzinfo=timezone.utc)
+    day_end = day_start + timedelta(days=1)
+
+    total = IngestResult()
     with sync_session_factory() as session:
-        result = ingest_season_schedule(session, season)
+        sport = session.query(Sport).filter_by(code="nba").first()
+        if sport is None:
+            return {"inserted": 0, "updated": 0}
+
+        games = session.query(Game).filter(
+            Game.sport_id == sport.id,
+            Game.scheduled_utc >= day_start,
+            Game.scheduled_utc < day_end,
+            Game.status == "final",
+        ).all()
+
+        for game in games:
+            r = ingest_box_scores(session, game.external_id)
+            total += r
         session.commit()
-    log.info("task.nba_ingest.done", inserted=result.rows_inserted, updated=result.rows_updated)
-    return {"inserted": result.rows_inserted, "updated": result.rows_updated}
+
+    log.info("task.nba_ingest.done", inserted=total.rows_inserted, updated=total.rows_updated)
+    return {"inserted": total.rows_inserted, "updated": total.rows_updated}
 
 
 @shared_task(name="src.tasks.ingest_tasks.ingest_yesterday_mlb", bind=True, max_retries=3)
 def ingest_yesterday_mlb(self: Any) -> dict:
-    from src.ingest.mlb.games import ingest_season_schedule
-    yesterday = date.today() - timedelta(days=1)
-    season = yesterday.year
+    """Ingest box scores only for games completed yesterday — not the whole season."""
+    from src.ingest.mlb.games import ingest_box_score
+    from src.db.models import Game, Sport
 
+    yesterday = date.today() - timedelta(days=1)
+    day_start = datetime(yesterday.year, yesterday.month, yesterday.day, tzinfo=timezone.utc)
+    day_end = day_start + timedelta(days=1)
+
+    total = IngestResult()
     with sync_session_factory() as session:
-        result = ingest_season_schedule(session, season)
+        sport = session.query(Sport).filter_by(code="mlb").first()
+        if sport is None:
+            return {"inserted": 0, "updated": 0}
+
+        games = session.query(Game).filter(
+            Game.sport_id == sport.id,
+            Game.scheduled_utc >= day_start,
+            Game.scheduled_utc < day_end,
+            Game.status == "final",
+        ).all()
+
+        for game in games:
+            r = ingest_box_score(session, game.external_id)
+            total += r
         session.commit()
-    log.info("task.mlb_ingest.done", inserted=result.rows_inserted)
-    return {"inserted": result.rows_inserted}
+
+    log.info("task.mlb_ingest.done", inserted=total.rows_inserted)
+    return {"inserted": total.rows_inserted, "updated": total.rows_updated}
 
 
 @shared_task(name="src.tasks.ingest_tasks.refresh_nba_injuries", bind=True, max_retries=2)
