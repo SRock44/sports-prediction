@@ -25,15 +25,19 @@ log = get_logger(__name__)
 
 def build_matchup_features(
     session: Session,
-    game_id: int,
-    home_team_id: int,
-    away_team_id: int,
-    scheduled_utc: datetime,
-    sport_id: int,
+    game: Any,
+    as_of: datetime,
 ) -> dict[str, Any]:
-    """Assemble the full matchup feature vector for a single NBA game."""
-    from src.core.time import as_of_for_game
-    as_of = as_of_for_game(scheduled_utc)
+    """Assemble the full matchup feature vector for a single NBA game.
+
+    Args:
+        game: A Game ORM instance.
+        as_of: The cutoff timestamp for feature computation (typically scheduled_utc - 1h).
+    """
+    game_id: int = game.id
+    home_team_id: int = game.home_team_id
+    away_team_id: int = game.away_team_id
+    sport_id: int = game.sport_id
 
     # ── Elo ratings (computed from all games before as_of) ────────────────────
     elo_ratings = _get_elo_ratings(session, sport_id, as_of)

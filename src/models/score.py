@@ -73,15 +73,9 @@ def _score_game_winner(
     from src.features.mlb.matchup import build_matchup_features as mlb_matchup
 
     build_fn = nba_matchup if sport.code == "nba" else mlb_matchup
+    as_of = as_of_for_game(game.scheduled_utc)
     try:
-        features = build_fn(
-            session=session,
-            game_id=game.id,
-            home_team_id=game.home_team_id,
-            away_team_id=game.away_team_id,
-            scheduled_utc=game.scheduled_utc,
-            sport_id=sport.id,
-        )
+        features = build_fn(session=session, game=game, as_of=as_of)
     except Exception as exc:
         log.error("score.feature_build_failed", game_id=game.id, error=str(exc))
         return 0

@@ -13,16 +13,20 @@ from src.features.mlb.team import build_team_features, _PARK_FACTORS
 
 def build_matchup_features(
     session: Session,
-    game_id: int,
-    home_team_id: int,
-    away_team_id: int,
-    scheduled_utc: datetime,
-    sport_id: int,
+    game: Any,
+    as_of: datetime,
 ) -> dict[str, Any]:
-    """Full MLB game feature vector."""
-    from src.core.time import as_of_for_game
+    """Full MLB game feature vector.
+
+    Args:
+        game: A Game ORM instance.
+        as_of: The cutoff timestamp for feature computation (typically scheduled_utc - 1h).
+    """
     import pandas as pd
-    as_of = as_of_for_game(scheduled_utc)
+    game_id: int = game.id
+    home_team_id: int = game.home_team_id
+    away_team_id: int = game.away_team_id
+    sport_id: int = game.sport_id
 
     # ── Elo ───────────────────────────────────────────────────────────────────
     result = session.execute(

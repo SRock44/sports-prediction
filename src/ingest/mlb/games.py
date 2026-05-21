@@ -106,11 +106,12 @@ def ingest_season_schedule(session: Session, season: int) -> IngestResult:
 
         for g in games:
             try:
-                _upsert_game(session, sport, g, season)
-                result.rows_inserted += 1
-                result.last_external_id = str(g.get("game_pk", ""))
+                inserted = _upsert_game(session, sport, g, season)
+                if inserted:
+                    result.rows_inserted += 1
+                result.last_external_id = str(g.get("game_id", ""))
             except Exception as exc:
-                log.warning("mlb.games.upsert_failed", game_pk=g.get("game_pk"), error=str(exc))
+                log.warning("mlb.games.upsert_failed", game_id=g.get("game_id"), error=str(exc))
                 result.errors.append(str(exc))
 
         session.flush()
@@ -119,17 +120,19 @@ def ingest_season_schedule(session: Session, season: int) -> IngestResult:
     return result
 
 
-def _upsert_game(session: Session, sport: Sport, g: dict[str, Any], season: int) -> None:
-    game_pk = str(g.get("game_pk", ""))
-    if not game_pk:
-        return
+def _upsert_game(session: Session, sport: Sport, g: dict[str, Any], season: int) -> bool:
+    """Returns True if a game was inserted or updated."""
+    game_id = str(g.get("game_id", ""))
+    if not game_id:
+        return False
 
     home_team = _resolve_team(session, sport, str(g.get("home_id", "")), g.get("home_name", ""))
     away_team = _resolve_team(session, sport, str(g.get("away_id", "")), g.get("away_name", ""))
     if home_team is None or away_team is None:
-        return
+        return False
 
-    game_date_str: str = g.get("game_date", "")
+    # Prefer game_datetime (full ISO) over game_date (date-only)
+    game_date_str: str = g.get("game_datetime") or g.get("game_date", "")
     try:
         scheduled_utc = ensure_utc(datetime.strptime(game_date_str, "%Y-%m-%dT%H:%M:%SZ"))
     except ValueError:
@@ -141,18 +144,17 @@ def _upsert_game(session: Session, sport: Sport, g: dict[str, Any], season: int)
     raw_status: str = g.get("status", "").lower()
     status = "final" if "final" in raw_status else ("scheduled" if "scheduled" in raw_status else raw_status)
 
-    # Resolve the home team's venue for park-factor features
     venue_ext_id = str(g.get("venue_id", ""))
     venue_obj = (
         session.query(Venue).filter_by(sport_id=sport.id, external_id=venue_ext_id).first()
         if venue_ext_id else None
     )
 
-    existing = session.query(Game).filter_by(sport_id=sport.id, external_id=game_pk).first()
+    existing = session.query(Game).filter_by(sport_id=sport.id, external_id=game_id).first()
     if existing is None:
         game = Game(
             sport_id=sport.id,
-            external_id=game_pk,
+            external_id=game_id,
             season=season,
             scheduled_utc=scheduled_utc,
             status=status,
@@ -161,7 +163,7 @@ def _upsert_game(session: Session, sport: Sport, g: dict[str, Any], season: int)
             venue_id=venue_obj.id if venue_obj else None,
             home_score=g.get("home_score"),
             away_score=g.get("away_score"),
-            meta={"game_type": g.get("game_type", "R"), "double_header": g.get("double_header", "N")},
+            meta={"game_type": g.get("game_type", "R"), "double_header": g.get("doubleheader", "N")},
         )
         session.add(game)
     else:
@@ -170,6 +172,7 @@ def _upsert_game(session: Session, sport: Sport, g: dict[str, Any], season: int)
             existing.home_score = g["home_score"]
         if g.get("away_score") is not None:
             existing.away_score = g["away_score"]
+    return True
 
 
 def _resolve_team(session: Session, sport: Sport, team_id_ext: str, name: str) -> Team | None:
