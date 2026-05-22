@@ -6,6 +6,7 @@ from typing import Any
 
 from src.core.time import utc_now
 
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from src.core.logging import get_logger
@@ -150,28 +151,27 @@ def _upsert_game(session: Session, sport: Sport, g: dict[str, Any], season: int)
         if venue_ext_id else None
     )
 
-    existing = session.query(Game).filter_by(sport_id=sport.id, external_id=game_id).first()
-    if existing is None:
-        game = Game(
-            sport_id=sport.id,
-            external_id=game_id,
-            season=season,
-            scheduled_utc=scheduled_utc,
+    stmt = pg_insert(Game.__table__).values(
+        sport_id=sport.id,
+        external_id=game_id,
+        season=season,
+        scheduled_utc=scheduled_utc,
+        status=status,
+        home_team_id=home_team.id,
+        away_team_id=away_team.id,
+        venue_id=venue_obj.id if venue_obj else None,
+        home_score=g.get("home_score"),
+        away_score=g.get("away_score"),
+        meta={"game_type": g.get("game_type", "R"), "double_header": g.get("doubleheader", "N")},
+    ).on_conflict_do_update(
+        index_elements=["sport_id", "external_id"],
+        set_=dict(
             status=status,
-            home_team_id=home_team.id,
-            away_team_id=away_team.id,
-            venue_id=venue_obj.id if venue_obj else None,
             home_score=g.get("home_score"),
             away_score=g.get("away_score"),
-            meta={"game_type": g.get("game_type", "R"), "double_header": g.get("doubleheader", "N")},
-        )
-        session.add(game)
-    else:
-        existing.status = status
-        if g.get("home_score") is not None:
-            existing.home_score = g["home_score"]
-        if g.get("away_score") is not None:
-            existing.away_score = g["away_score"]
+        ),
+    )
+    session.execute(stmt)
     return True
 
 
