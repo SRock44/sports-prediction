@@ -222,9 +222,15 @@ def _load_training_data(
     if df.empty:
         return df, df, []
 
-    cutoff = df["game_date"].max() - timedelta(weeks=4)
-    training_df = df[df["game_date"] <= cutoff]
-    holdout_df = df[df["game_date"] > cutoff]
+    # Use the most recent season as holdout for a proper out-of-sample evaluation.
+    # Fall back to 8-week window only if there is just one season of data.
+    max_season = df["season"].max()
+    training_df = df[df["season"] < max_season]
+    holdout_df = df[df["season"] == max_season]
+    if training_df.empty:
+        cutoff = df["game_date"].max() - timedelta(weeks=8)
+        training_df = df[df["game_date"] <= cutoff]
+        holdout_df = df[df["game_date"] > cutoff]
 
     feature_names = [
         c for c in df.columns

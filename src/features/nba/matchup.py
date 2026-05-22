@@ -66,7 +66,28 @@ def build_matchup_features(
 
     matchup["net_rtg_diff_last5"] = home_feats["net_rtg_last5"] - away_feats["net_rtg_last5"]
     matchup["net_rtg_diff_last10"] = home_feats["net_rtg_last10"] - away_feats["net_rtg_last10"]
+    matchup["net_rtg_diff_last20"] = home_feats["net_rtg_last20"] - away_feats["net_rtg_last20"]
     matchup["rest_diff"] = home_feats["rest_days"] - away_feats["rest_days"]
+
+    matchup["pace_diff_last5"] = home_feats["pace_last5"] - away_feats["pace_last5"]
+    matchup["pace_diff_last10"] = home_feats["pace_last10"] - away_feats["pace_last10"]
+    matchup["ts_pct_diff_last5"] = home_feats["ts_pct_last5"] - away_feats["ts_pct_last5"]
+    matchup["ts_pct_diff_last10"] = home_feats["ts_pct_last10"] - away_feats["ts_pct_last10"]
+    matchup["tov_rate_diff_last5"] = home_feats["tov_rate_last5"] - away_feats["tov_rate_last5"]
+    matchup["oreb_pct_diff_last10"] = home_feats["oreb_pct_last10"] - away_feats["oreb_pct_last10"]
+
+    matchup["win_pct_diff_last5"] = home_feats["win_pct_last5"] - away_feats["win_pct_last5"]
+    matchup["win_pct_diff_last10"] = home_feats["win_pct_last10"] - away_feats["win_pct_last10"]
+    matchup["win_pct_diff_last20"] = home_feats["win_pct_last20"] - away_feats["win_pct_last20"]
+    matchup["win_pct_season_diff"] = home_feats["win_pct_season"] - away_feats["win_pct_season"]
+
+    matchup["streak_diff"] = home_feats["streak"] - away_feats["streak"]
+    matchup["b2b_diff"] = home_feats["b2b"] - away_feats["b2b"]
+    matchup["schedule_load_diff"] = (
+        home_feats["three_in_four"] + home_feats["four_in_six"]
+        - away_feats["three_in_four"] - away_feats["four_in_six"]
+    )
+    matchup["starter_avail_diff"] = home_feats["starter_availability"] - away_feats["starter_availability"]
 
     # ── Head-to-head (last 5 regular season meetings) ─────────────────────────
     h2h = _get_h2h(session, home_team_id, away_team_id, as_of, limit=5)

@@ -5,16 +5,16 @@ load_team_game_stats_before() which filters scheduled_utc < as_of.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import numpy as np
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.core.logging import get_logger
 from src.features.common import (
     load_team_game_stats_before,
-    load_injuries_before,
     rolling_mean,
     haversine_km,
 )
@@ -32,31 +32,18 @@ def build_team_features(
     opponent_id: int | None = None,
     is_home: bool = True,
 ) -> dict[str, Any]:
-    """Build ~60 team features for game-winner model."""
-    games = load_team_game_stats_before(session, team_id, as_of_utc, limit=30)
+    """Build team features for game-winner model."""
+    games = load_team_game_stats_before(session, team_id, as_of_utc, limit=40)
 
     feats: dict[str, Any] = {}
-
-    # ── Elo ──────────────────────────────────────────────────────────────────
     feats["elo"] = elo_rating
     feats["is_home"] = int(is_home)
 
     if not games:
-        # No history — return priors
-        for w in _WINDOWS:
-            for stat in ["net_rtg", "off_rtg", "def_rtg", "pace"]:
-                feats[f"{stat}_last{w}"] = 0.0
-        feats["rest_days"] = 2.0
-        feats["b2b"] = 0
-        feats["three_in_four"] = 0
-        feats["four_in_six"] = 0
-        feats["travel_km"] = 0.0
-        feats["home_win_pct"] = 0.5
-        feats["away_win_pct"] = 0.5
-        feats["starter_availability"] = 1.0
+        _fill_defaults(feats)
         return feats
 
-    # ── Extract time-series of game outcomes and stats ────────────────────────
+    # ── Extract time-series ───────────────────────────────────────────────────
     game_dates: list[datetime] = []
     off_rtgs: list[float] = []
     def_rtgs: list[float] = []
@@ -64,13 +51,20 @@ def build_team_features(
     paces: list[float] = []
     won: list[int] = []
     home_flags: list[int] = []
+    ts_pcts: list[float] = []
+    three_pars: list[float] = []
+    tov_rates: list[float] = []
+    oreb_pcts: list[float] = []
 
     for g in games:
         stats = g["stats"] or {}
         adv = stats.get("advanced", {})
-        off_rtg = _safe_float(adv.get("offensiveRating") or adv.get("E_OFF_RATING"))
-        def_rtg = _safe_float(adv.get("defensiveRating") or adv.get("E_DEF_RATING"))
-        pace = _safe_float(adv.get("pace") or adv.get("PACE"))
+        trad = stats.get("traditional", {})
+
+        # Advanced: efficiency + pace
+        off_rtg = _sf(adv.get("offensiveRating") or adv.get("E_OFF_RATING"))
+        def_rtg = _sf(adv.get("defensiveRating") or adv.get("E_DEF_RATING"))
+        pace = _sf(adv.get("pace") or adv.get("PACE"))
 
         if off_rtg is not None and def_rtg is not None:
             off_rtgs.append(off_rtg)
@@ -79,15 +73,31 @@ def build_team_features(
         if pace is not None:
             paces.append(pace)
 
+        # Traditional: shooting efficiency
+        pts = _sf(trad.get("points") or trad.get("PTS"))
+        fga = _sf(trad.get("fieldGoalsAttempted") or trad.get("FGA"))
+        fg3a = _sf(trad.get("threePointersAttempted") or trad.get("FG3A") or trad.get("fg3a"))
+        fta = _sf(trad.get("freeThrowsAttempted") or trad.get("FTA"))
+        tov = _sf(trad.get("turnovers") or trad.get("TOV"))
+        oreb = _sf(trad.get("offensiveRebounds") or trad.get("OREB"))
+        dreb = _sf(trad.get("defensiveRebounds") or trad.get("DREB"))
+
+        if pts and fga and fta and fga > 0:
+            ts = pts / (2.0 * (fga + 0.44 * fta))
+            ts_pcts.append(ts)
+        if fg3a is not None and fga and fga > 0:
+            three_pars.append(fg3a / fga)
+        if tov is not None and fga and fta and (fga + 0.44 * fta + tov) > 0:
+            tov_rates.append(tov / (fga + 0.44 * fta + tov))
+        if oreb is not None and dreb is not None and (oreb + dreb) > 0:
+            oreb_pcts.append(oreb / (oreb + dreb))
+
+        # Outcome
         is_home_game = g["home_team_id"] == team_id
         home_flags.append(int(is_home_game))
-        home_score = g["home_score"] or 0
-        away_score = g["away_score"] or 0
-        if is_home_game:
-            won.append(int(home_score > away_score))
-        else:
-            won.append(int(away_score > home_score))
-
+        hs = g["home_score"] or 0
+        aw = g["away_score"] or 0
+        won.append(int(hs > aw) if is_home_game else int(aw > hs))
         game_dates.append(g["scheduled_utc"])
 
     # ── Rolling efficiency windows ────────────────────────────────────────────
@@ -97,42 +107,128 @@ def build_team_features(
         feats[f"net_rtg_last{w}"] = rolling_mean(net_rtgs, w) or 0.0
         feats[f"pace_last{w}"] = rolling_mean(paces, w) or 100.0
 
-    # ── Rest & fatigue flags ──────────────────────────────────────────────────
-    most_recent_game = max(game_dates) if game_dates else None
-    rest_days = (as_of_utc - most_recent_game).total_seconds() / 86400 if most_recent_game else 3.0
-    feats["rest_days"] = min(rest_days, 10.0)  # cap at 10
+    # ── Shooting efficiency windows ───────────────────────────────────────────
+    for w in [5, 10]:
+        feats[f"ts_pct_last{w}"] = rolling_mean(ts_pcts, w) or 0.540
+        feats[f"three_par_last{w}"] = rolling_mean(three_pars, w) or 0.350
+        feats[f"tov_rate_last{w}"] = rolling_mean(tov_rates, w) or 0.130
+        feats[f"oreb_pct_last{w}"] = rolling_mean(oreb_pcts, w) or 0.250
 
-    game_dates_sorted = sorted(game_dates, reverse=True)
-    feats["b2b"] = int(rest_days < 1.5)
-    feats["three_in_four"] = int(_games_in_window(game_dates_sorted, as_of_utc, days=4) >= 3)
-    feats["four_in_six"] = int(_games_in_window(game_dates_sorted, as_of_utc, days=6) >= 4)
+    # ── Win% at multiple windows ──────────────────────────────────────────────
+    for w in [3, 5, 10, 20]:
+        feats[f"win_pct_last{w}"] = rolling_mean(won, w) or 0.5
+    feats["win_pct_season"] = float(np.mean(won)) if won else 0.5
 
     # ── Home/away splits ──────────────────────────────────────────────────────
     home_games = [w for w, h in zip(won, home_flags) if h == 1]
-    away_games_res = [w for w, h in zip(won, home_flags) if h == 0]
+    away_games = [w for w, h in zip(won, home_flags) if h == 0]
     feats["home_win_pct"] = float(np.mean(home_games)) if home_games else 0.5
-    feats["away_win_pct"] = float(np.mean(away_games_res)) if away_games_res else 0.5
-    feats["overall_win_pct_last10"] = rolling_mean(won, 10) or 0.5
+    feats["away_win_pct"] = float(np.mean(away_games)) if away_games else 0.5
 
-    # ── Travel ───────────────────────────────────────────────────────────────
-    # Simplified: we'd look up venue coordinates; default 0 if not available
-    feats["travel_km"] = 0.0  # populated by matchup builder if venue coords available
+    # ── Winning/losing streak ─────────────────────────────────────────────────
+    feats["streak"] = _compute_streak(won)
 
-    # ── Starter availability (injury-adjusted) ────────────────────────────────
-    # Requires player-level data; placeholder here, overridden by matchup builder
-    feats["starter_availability"] = 1.0
+    # ── Rest & schedule density ───────────────────────────────────────────────
+    most_recent = max(game_dates)
+    rest_days = (as_of_utc - most_recent).total_seconds() / 86400
+    feats["rest_days"] = min(rest_days, 10.0)
+
+    dates_desc = sorted(game_dates, reverse=True)
+    feats["b2b"] = int(rest_days < 1.5)
+    feats["three_in_four"] = int(_games_in_window(dates_desc, as_of_utc, days=4) >= 3)
+    feats["four_in_six"] = int(_games_in_window(dates_desc, as_of_utc, days=6) >= 4)
+
+    # ── Travel placeholder (populated by matchup builder) ────────────────────
+    feats["travel_km"] = 0.0
+
+    # ── Injury-adjusted starter availability ─────────────────────────────────
+    feats["starter_availability"] = _get_starter_availability(session, team_id, as_of_utc)
 
     return feats
 
 
-def _safe_float(v: Any) -> float | None:
+def _get_starter_availability(session: Session, team_id: int, as_of_utc: datetime) -> float:
+    """Fraction of top-8 rotation players not ruled out or doubtful."""
+    try:
+        result = session.execute(
+            text("""
+                WITH top_players AS (
+                    SELECT pgs.player_id, COUNT(*) AS games_played
+                    FROM player_game_stats pgs
+                    JOIN games g ON g.id = pgs.game_id
+                    WHERE pgs.team_id = :team_id
+                      AND g.scheduled_utc < :as_of
+                      AND g.status = 'final'
+                    GROUP BY pgs.player_id
+                    ORDER BY games_played DESC
+                    LIMIT 8
+                ),
+                latest_injuries AS (
+                    SELECT DISTINCT ON (player_id) player_id, status
+                    FROM injuries
+                    WHERE player_id IN (SELECT player_id FROM top_players)
+                      AND reported_at < :as_of
+                    ORDER BY player_id, reported_at DESC
+                )
+                SELECT tp.player_id, COALESCE(li.status, 'Active') AS injury_status
+                FROM top_players tp
+                LEFT JOIN latest_injuries li ON li.player_id = tp.player_id
+            """),
+            {"team_id": team_id, "as_of": as_of_utc},
+        )
+        rows = list(result)
+        if not rows:
+            return 1.0
+        injured = sum(1 for r in rows if r.injury_status in ("Out", "Doubtful"))
+        return 1.0 - (injured / len(rows))
+    except Exception:
+        return 1.0
+
+
+def _fill_defaults(feats: dict[str, Any]) -> None:
+    for w in _WINDOWS:
+        for stat in ["off_rtg", "def_rtg", "net_rtg", "pace"]:
+            feats[f"{stat}_last{w}"] = 0.0 if stat == "net_rtg" else (100.0 if stat == "pace" else 110.0)
+    for w in [5, 10]:
+        feats[f"ts_pct_last{w}"] = 0.540
+        feats[f"three_par_last{w}"] = 0.350
+        feats[f"tov_rate_last{w}"] = 0.130
+        feats[f"oreb_pct_last{w}"] = 0.250
+    for w in [3, 5, 10, 20]:
+        feats[f"win_pct_last{w}"] = 0.5
+    feats["win_pct_season"] = 0.5
+    feats["home_win_pct"] = 0.5
+    feats["away_win_pct"] = 0.5
+    feats["streak"] = 0
+    feats["rest_days"] = 2.0
+    feats["b2b"] = 0
+    feats["three_in_four"] = 0
+    feats["four_in_six"] = 0
+    feats["travel_km"] = 0.0
+    feats["starter_availability"] = 1.0
+
+
+def _sf(v: Any) -> float | None:
     try:
         return float(v)
     except (TypeError, ValueError):
         return None
 
 
+def _compute_streak(won: list[int]) -> int:
+    """Positive = win streak, negative = losing streak (from most recent game)."""
+    if not won:
+        return 0
+    streak = 0
+    last = won[-1]
+    for w in reversed(won):
+        if w == last:
+            streak += 1 if last == 1 else -1
+        else:
+            break
+    return streak
+
+
 def _games_in_window(dates_desc: list[datetime], as_of: datetime, days: int) -> int:
-    from datetime import timedelta
     cutoff = as_of - timedelta(days=days)
     return sum(1 for d in dates_desc if d >= cutoff)
