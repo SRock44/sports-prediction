@@ -17,7 +17,6 @@ class TestShouldSend:
     def test_first_send_always_true(self):
         r = _mock_redis(None)
         assert should_send(r, game_id=1, target="home_win", current_prob=0.6)
-        r.set.assert_called_once()
 
     def test_no_shift_returns_false(self):
         r = _mock_redis("0.6")

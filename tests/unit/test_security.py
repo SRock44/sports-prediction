@@ -66,7 +66,7 @@ class TestJWT:
         settings = get_settings()
         exp = datetime.now(UTC) - timedelta(seconds=1)
         payload = {"sub": "user-1", "scopes": [], "exp": int(exp.timestamp())}
-        token = jwt.encode(payload, settings.secret_key, algorithm="HS256")
+        token = jwt.encode(payload, settings.jwt_secret.get_secret_value(), algorithm="HS256")
 
         with pytest.raises(JWTError):
             decode_access_token(token)

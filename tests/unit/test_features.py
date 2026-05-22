@@ -55,11 +55,11 @@ class TestRollingMean:
     def test_window_shorter_than_series(self):
         assert rolling_mean([10.0, 20.0, 30.0], window=2) == pytest.approx(25.0)
 
-    def test_empty_returns_nan(self):
-        assert math.isnan(rolling_mean([], window=5))
+    def test_empty_returns_none(self):
+        assert rolling_mean([], window=5) is None
 
-    def test_min_periods_returns_nan_when_not_met(self):
-        assert math.isnan(rolling_mean([1.0], window=5, min_periods=2))
+    def test_min_periods_returns_none_when_not_met(self):
+        assert rolling_mean([1.0], window=5, min_periods=2) is None
 
     def test_min_periods_met(self):
         assert rolling_mean([1.0, 2.0], window=5, min_periods=2) == pytest.approx(1.5)

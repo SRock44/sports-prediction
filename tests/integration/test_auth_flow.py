@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.core.security import generate_api_key, hash_api_key
+from src.core.time import utc_now
 from src.db.models.auth import ApiKey
 
 
@@ -33,6 +34,7 @@ def api_key_pair(pg_session) -> tuple[str, str]:
         name="test-key",
         key_hash=hash_api_key(plaintext),
         scopes=["predictions:read", "models:read"],
+        created_at=utc_now(),
     )
     pg_session.add(k)
     pg_session.flush()
