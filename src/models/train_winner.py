@@ -45,23 +45,23 @@ def train_winner_model(
     lam = _LAMBDA.get(sport, 0.25)
 
     # Chronological split: last 10% of training_df used for calibration
-    training_df = training_df.sort_values("scheduled_utc").reset_index(drop=True)
+    training_df = training_df.sort_values("game_date").reset_index(drop=True)
     split_idx = int(len(training_df) * 0.9)
     train_part = training_df.iloc[:split_idx]
     calib_part = training_df.iloc[split_idx:]
 
     X_train = train_part[feature_names].values.astype(np.float32)
-    y_train = train_part["target"].values.astype(int)
+    y_train = train_part["y"].values.astype(int)
     X_calib = calib_part[feature_names].values.astype(np.float32)
-    y_calib = calib_part["target"].values.astype(int)
+    y_calib = calib_part["y"].values.astype(int)
     X_hold = holdout_df[feature_names].values.astype(np.float32)
-    y_hold = holdout_df["target"].values.astype(int)
+    y_hold = holdout_df["y"].values.astype(int)
 
     # Sample weights: exponential decay anchored to the last date in the training set
     # so the same historical data always produces the same weights regardless of run date.
-    anchor = pd.to_datetime(training_df["scheduled_utc"].max(), utc=True)
+    anchor = pd.to_datetime(training_df["game_date"].max())
     def make_weights(df: pd.DataFrame) -> np.ndarray:
-        days_ago = (anchor - pd.to_datetime(df["scheduled_utc"], utc=True)).dt.total_seconds() / 86400
+        days_ago = (anchor - pd.to_datetime(df["game_date"])).dt.total_seconds() / 86400
         return np.array([exponential_decay_weight(d, lam) for d in days_ago], dtype=np.float32)
 
     w_train = make_weights(train_part)
@@ -108,11 +108,11 @@ def train_winner_model(
     )
     w_all = make_weights(training_df)
     X_all = training_df[feature_names].values.astype(np.float32)
-    y_all = training_df["target"].values.astype(int)
+    y_all = training_df["y"].values.astype(int)
     best_clf.fit(X_all, y_all, sample_weight=w_all, verbose=False)
 
     # ── Isotonic calibration ──────────────────────────────────────────────────
-    calibrated = CalibratedClassifierCV(best_clf, method="isotonic", cv="prefit")
+    calibrated = CalibratedClassifierCV(best_clf, method="isotonic", cv=5)
     calibrated.fit(X_calib, y_calib, sample_weight=w_calib)
 
     # ── Evaluate on holdout ───────────────────────────────────────────────────
@@ -131,8 +131,8 @@ def train_winner_model(
         params=best_params,
         feature_names=feature_names,
         training_range=(
-            str(training_df["scheduled_utc"].min()),
-            str(training_df["scheduled_utc"].max()),
+            str(training_df["game_date"].min()),
+            str(training_df["game_date"].max()),
         ),
         model_framework="sklearn",  # CalibratedClassifierCV wraps XGBoost → sklearn interface
     )

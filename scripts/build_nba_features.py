@@ -21,6 +21,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from sqlalchemy import or_
+
 from src.core.logging import get_logger
 from src.core.time import nba_season_for_date, as_of_for_game
 from src.db.models import Game, MatchupFeature, PlayerGameStats, Sport
@@ -59,7 +61,7 @@ def build_features_for_seasons(season_years: list[int], force: bool = False) -> 
                 Game.sport_id == sport.id,
                 Game.status == "final",
                 Game.season.in_(season_years),
-                Game.meta["game_type"].astext != "PR",
+                or_(Game.meta["game_type"] == None, Game.meta["game_type"].astext != "PR"),
                 Game.id.in_(
                     session.query(PlayerGameStats.game_id).distinct()
                 ),
