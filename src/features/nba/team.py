@@ -3,6 +3,7 @@
 All features use data strictly before `as_of_utc` — enforced by
 load_team_game_stats_before() which filters scheduled_utc < as_of.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -17,12 +18,12 @@ from src.features.common import (
     load_team_game_stats_before,
     load_team_top_player_stats,
     rolling_mean,
-    haversine_km,
 )
 
 log = get_logger(__name__)
 
 _WINDOWS = [5, 10, 20]
+
 
 # Approximate UTC offset from longitude (15° = 1 hour).
 def _lon_to_tz_offset(lon: float) -> float:
@@ -126,8 +127,8 @@ def build_team_features(
     feats["win_pct_season"] = float(np.mean(won)) if won else 0.5
 
     # ── Home/away splits ──────────────────────────────────────────────────────
-    home_games = [w for w, h in zip(won, home_flags) if h == 1]
-    away_games = [w for w, h in zip(won, home_flags) if h == 0]
+    home_games = [w for w, h in zip(won, home_flags, strict=False) if h == 1]
+    away_games = [w for w, h in zip(won, home_flags, strict=False) if h == 0]
     feats["home_win_pct"] = float(np.mean(home_games)) if home_games else 0.5
     feats["away_win_pct"] = float(np.mean(away_games)) if away_games else 0.5
 
@@ -178,6 +179,7 @@ def build_team_features(
 def _get_last_venue_lon(session: Session, team_id: int, before_utc: datetime) -> float | None:
     """Return the longitude of the venue for the most recent game before before_utc."""
     from sqlalchemy import text
+
     try:
         result = session.execute(
             text("""
@@ -201,8 +203,10 @@ def _get_roster_quality(session: Session, team_id: int, as_of_utc: datetime) -> 
     players = load_team_top_player_stats(session, team_id, as_of_utc, n_games=10, top_n=8)
     if not players:
         return {
-            "roster_star_pts": 20.0, "roster_star_ts_pct": 0.540,
-            "roster_depth_score": 0.540, "star_usage_conc": 0.50,
+            "roster_star_pts": 20.0,
+            "roster_star_ts_pct": 0.540,
+            "roster_depth_score": 0.540,
+            "star_usage_conc": 0.50,
         }
 
     pts = [p["avg_pts"] or 0.0 for p in players]
@@ -266,7 +270,9 @@ def _get_starter_availability(session: Session, team_id: int, as_of_utc: datetim
 def _fill_defaults(feats: dict[str, Any]) -> None:
     for w in _WINDOWS:
         for stat in ["off_rtg", "def_rtg", "net_rtg", "pace"]:
-            feats[f"{stat}_last{w}"] = 0.0 if stat == "net_rtg" else (100.0 if stat == "pace" else 110.0)
+            feats[f"{stat}_last{w}"] = (
+                0.0 if stat == "net_rtg" else (100.0 if stat == "pace" else 110.0)
+            )
     for w in [5, 10]:
         feats[f"ts_pct_last{w}"] = 0.540
         feats[f"three_par_last{w}"] = 0.350

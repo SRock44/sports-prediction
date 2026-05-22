@@ -3,16 +3,16 @@
 mlb-statsapi docs: https://github.com/toddrob99/MLB-StatsAPI
 Baseball Savant (via pybaseball): https://baseballsavant.mlb.com/statcast_search
 """
+
 from __future__ import annotations
 
 import time
-from datetime import date, timedelta
 from typing import Any
 
+import pybaseball
 import requests.exceptions
 import statsapi
-import pybaseball
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from src.core.logging import get_logger
 
@@ -27,6 +27,7 @@ def _sleep() -> None:
 
 
 # ── Schedule / games ─────────────────────────────────────────────────────────
+
 
 @retry(
     retry=retry_if_exception_type(requests.exceptions.RequestException),
@@ -104,6 +105,7 @@ def get_all_teams(season: int) -> list[dict[str, Any]]:
 
 
 # ── Statcast (pybaseball) ─────────────────────────────────────────────────────
+
 
 def get_statcast_range(start_dt: str, end_dt: str) -> Any:
     """Fetch pitch-level Statcast data. Returns a pandas DataFrame.

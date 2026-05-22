@@ -4,24 +4,24 @@ stats.nba.com is unofficial but stable; nba_api handles endpoint mapping.
 We enforce 1 req/sec (the library's default) and rotate User-Agents to reduce
 the chance of IP-based throttling during backfill.
 """
+
 from __future__ import annotations
 
 import time
 from typing import Any
 
+import requests.exceptions
+from nba_api.live.nba.endpoints import scoreboard as live_scoreboard
 from nba_api.stats.endpoints import (
     BoxScoreAdvancedV3,
     BoxScoreTraditionalV3,
+    CommonTeamRoster,
     LeagueGameFinder,
     PlayByPlayV3,
-    ScoreboardV2,
-    CommonTeamRoster,
-    LeagueStandings,
 )
-from nba_api.live.nba.endpoints import scoreboard as live_scoreboard
-from nba_api.stats.static import teams as static_teams, players as static_players
-import requests.exceptions
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from nba_api.stats.static import players as static_players
+from nba_api.stats.static import teams as static_teams
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from src.core.logging import get_logger
 

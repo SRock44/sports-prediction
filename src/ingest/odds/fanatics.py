@@ -5,12 +5,13 @@ Amelco platform. No API key required — same endpoint their frontend uses.
 
 API base: https://sportsbook.fanatics.com/api/v2
 """
+
 from __future__ import annotations
 
 from typing import Any
 
 import requests
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from src.core.logging import get_logger
 
@@ -72,9 +73,7 @@ def _parse_events(data: Any) -> list[dict[str, Any]]:
             continue
 
         start_time = (
-            event.get("startTime")
-            or event.get("startDate")
-            or event.get("scheduledStart", "")
+            event.get("startTime") or event.get("startDate") or event.get("scheduledStart", "")
         )
 
         game: dict[str, Any] = {

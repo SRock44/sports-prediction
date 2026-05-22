@@ -1,4 +1,5 @@
 """Celery beat schedule — single source of truth for all periodic tasks."""
+
 from __future__ import annotations
 
 from celery.schedules import crontab
@@ -54,7 +55,7 @@ BEAT_SCHEDULE = {
         "task": "src.tasks.score_tasks.score_mlb_upcoming",
         "schedule": crontab(hour=13, minute=30),
     },
-    # ── Re-score on lineup confirmation (every 15 min 15:00–22:00 UTC) ───────
+    # ── Re-score on lineup confirmation (every 15 min 15:00-22:00 UTC) ───────
     "score-nba-lineup-update": {
         "task": "src.tasks.score_tasks.rescore_on_lineup_change_nba",
         "schedule": crontab(minute="*/15", hour="15-22"),

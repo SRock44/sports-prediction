@@ -1,4 +1,5 @@
 """FastAPI dependency injectors: auth, DB session, rate limiting."""
+
 from __future__ import annotations
 
 from typing import Annotated
@@ -9,11 +10,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import settings
 from src.core.security import decode_access_token, token_has_scope
-from src.db.session import get_async_session
 
 # ── Rate limiter ──────────────────────────────────────────────────────────────
 
@@ -42,7 +41,7 @@ async def get_current_payload(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid or expired token: {exc}",
             headers={"WWW-Authenticate": "Bearer"},
-        )
+        ) from exc
 
     # Attach key_id to request state for audit logging
     request.state.api_key_id = payload.get("sub")
@@ -61,6 +60,7 @@ async def get_current_payload(
 
 def require_scope(scope: str):
     """Dependency factory: raises 403 if the JWT lacks the required scope."""
+
     async def _check(payload: dict = Depends(get_current_payload)) -> dict:
         if not token_has_scope(payload, scope):
             raise HTTPException(
@@ -68,6 +68,7 @@ def require_scope(scope: str):
                 detail=f"Requires scope: {scope}",
             )
         return payload
+
     return _check
 
 

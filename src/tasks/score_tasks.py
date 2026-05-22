@@ -1,7 +1,6 @@
 """Score upcoming games."""
-from __future__ import annotations
 
-from typing import Any
+from __future__ import annotations
 
 from src.core.logging import get_logger
 from src.db.session import sync_session_factory
@@ -11,6 +10,7 @@ log = get_logger(__name__)
 
 def _score_sport(sport: str) -> dict:
     from src.models.score import score_upcoming_games
+
     with sync_session_factory() as session:
         count = score_upcoming_games(session, sport)
         session.commit()
@@ -28,6 +28,7 @@ def score_mlb_upcoming() -> dict:
 def rescore_on_lineup_change_nba() -> dict:
     """Re-score NBA games where lineups changed since last scoring."""
     from src.models.score import score_upcoming_games
+
     with sync_session_factory() as session:
         count = score_upcoming_games(session, "nba", hours_ahead=8)
         session.commit()
@@ -36,6 +37,7 @@ def rescore_on_lineup_change_nba() -> dict:
 
 def rescore_on_lineup_change_mlb() -> dict:
     from src.models.score import score_upcoming_games
+
     with sync_session_factory() as session:
         count = score_upcoming_games(session, "mlb", hours_ahead=8)
         session.commit()
@@ -45,12 +47,12 @@ def rescore_on_lineup_change_mlb() -> dict:
 # Register as Celery tasks
 from src.tasks.celery_app import app  # noqa: E402
 
-score_nba_upcoming = app.task(
-    name="src.tasks.score_tasks.score_nba_upcoming", bind=False
-)(score_nba_upcoming)
-score_mlb_upcoming = app.task(
-    name="src.tasks.score_tasks.score_mlb_upcoming", bind=False
-)(score_mlb_upcoming)
+score_nba_upcoming = app.task(name="src.tasks.score_tasks.score_nba_upcoming", bind=False)(
+    score_nba_upcoming
+)
+score_mlb_upcoming = app.task(name="src.tasks.score_tasks.score_mlb_upcoming", bind=False)(
+    score_mlb_upcoming
+)
 rescore_on_lineup_change_nba = app.task(
     name="src.tasks.score_tasks.rescore_on_lineup_change_nba", bind=False
 )(rescore_on_lineup_change_nba)

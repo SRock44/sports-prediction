@@ -1,4 +1,5 @@
 """MLB player-level feature engineering for batter and pitcher props."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -7,8 +8,7 @@ from typing import Any
 import numpy as np
 from sqlalchemy.orm import Session
 
-from src.features.common import load_player_game_stats_before, load_injuries_before, rolling_mean
-
+from src.features.common import load_injuries_before, load_player_game_stats_before, rolling_mean
 
 _BATTER_STATS = {
     "H": ("batting", "hits"),
@@ -52,9 +52,8 @@ def build_batter_features(
 
     stat_vals: list[float] = []
     pa_list: list[float] = []
-    vs_same_hand: list[float] = []
 
-    section, col = _BATTER_STATS.get(stat, ("batting", stat.lower()))
+    _, col = _BATTER_STATS.get(stat, ("batting", stat.lower()))
 
     for g in games:
         raw = g["stats"] or {}
@@ -101,7 +100,7 @@ def build_pitcher_features(
     outs_list: list[float] = []
     era_list: list[float] = []
 
-    section, col = _PITCHER_STATS.get(stat, ("pitching", stat.lower()))
+    _, col = _PITCHER_STATS.get(stat, ("pitching", stat.lower()))
 
     for g in games:
         raw = g["stats"] or {}

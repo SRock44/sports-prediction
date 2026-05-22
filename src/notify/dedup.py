@@ -4,6 +4,7 @@ Skip re-posting if the same (game_id, target) was sent within the last 6 hours
 AND the probability shift is less than 3 percentage points.
 Confirmed-lineup updates always re-post (caller passes is_lineup_update=True).
 """
+
 from __future__ import annotations
 
 import redis
@@ -13,7 +14,7 @@ from src.core.logging import get_logger
 log = get_logger(__name__)
 
 _TTL_SECONDS = 6 * 3600  # 6 hours
-_MIN_PROB_SHIFT = 0.03   # 3 pp
+_MIN_PROB_SHIFT = 0.03  # 3 pp
 
 
 def should_send(

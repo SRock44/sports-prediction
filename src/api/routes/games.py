@@ -1,16 +1,17 @@
 """GET /v1/games/upcoming, GET /v1/games/{game_id}"""
+
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Any, Annotated
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.deps import require_scope, limiter
+from src.api.deps import require_scope
 from src.core.time import utc_now
+from src.db.repositories.games import get_game_by_id, get_upcoming_games
 from src.db.session import get_async_session
-from src.db.repositories.games import get_upcoming_games, get_game_by_id
 
 router = APIRouter(tags=["games"])
 

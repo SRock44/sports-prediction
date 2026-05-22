@@ -1,4 +1,5 @@
 """GET /v1/models/active, GET /v1/sports"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -8,9 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import require_scope
-from src.db.session import get_async_session
 from src.db.models.prediction import ModelRecord
 from src.db.models.sport import Sport
+from src.db.session import get_async_session
 
 router = APIRouter(tags=["models"])
 

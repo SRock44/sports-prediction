@@ -7,10 +7,10 @@ For each game G in a small sample of completed games, we:
 
 This is the primary guard against train/serve skew.
 """
+
 from __future__ import annotations
 
 import pytest
-from datetime import timezone
 
 from src.core.time import as_of_for_game
 

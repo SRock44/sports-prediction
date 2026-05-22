@@ -1,8 +1,8 @@
 """MLB IL transactions and roster sync."""
+
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -10,11 +10,13 @@ from src.core.logging import get_logger
 from src.core.time import utc_now
 from src.db.models import Injury, Player, Sport, Team
 from src.ingest.common import IngestResult
-from src.ingest.mlb.client import get_transactions, get_roster
+from src.ingest.mlb.client import get_roster, get_transactions
 
 log = get_logger(__name__)
 
-_IL_TRANSACTION_TYPES = frozenset(["IL Placement", "IL Transfer", "IL Reinstatement", "10 Day IL", "60 Day IL"])
+_IL_TRANSACTION_TYPES = frozenset(
+    ["IL Placement", "IL Transfer", "IL Reinstatement", "10 Day IL", "60 Day IL"]
+)
 
 
 def ingest_il_transactions(session: Session, lookback_days: int = 3) -> IngestResult:
@@ -43,7 +45,9 @@ def ingest_il_transactions(session: Session, lookback_days: int = 3) -> IngestRe
         if not player_id_ext:
             continue
 
-        player = session.query(Player).filter_by(sport_id=sport.id, external_id=player_id_ext).first()
+        player = (
+            session.query(Player).filter_by(sport_id=sport.id, external_id=player_id_ext).first()
+        )
         if player is None:
             player = Player(
                 sport_id=sport.id,
@@ -98,7 +102,9 @@ def sync_roster(session: Session, team_id_ext: str, season: int) -> IngestResult
         if not player_id_ext:
             continue
 
-        existing = session.query(Player).filter_by(sport_id=sport.id, external_id=player_id_ext).first()
+        existing = (
+            session.query(Player).filter_by(sport_id=sport.id, external_id=player_id_ext).first()
+        )
         pos_data = entry.get("position", {})
         if existing is None:
             player = Player(
@@ -106,7 +112,10 @@ def sync_roster(session: Session, team_id_ext: str, season: int) -> IngestResult
                 external_id=player_id_ext,
                 full_name=person.get("fullName", player_id_ext),
                 primary_position=pos_data.get("abbreviation"),
-                meta={"jersey_number": entry.get("jerseyNumber"), "status": entry.get("status", {}).get("code")},
+                meta={
+                    "jersey_number": entry.get("jerseyNumber"),
+                    "status": entry.get("status", {}).get("code"),
+                },
             )
             session.add(player)
             result.rows_inserted += 1

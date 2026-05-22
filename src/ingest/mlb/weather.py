@@ -8,9 +8,10 @@ Wind direction relative to ballpark matters for run scoring:
 - Wind blowing in from CF → suppresses HRs, lower run total
 We store raw bearing and compute the ballpark-relative factor in features.
 """
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import requests
@@ -29,12 +30,36 @@ _OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 # Wind blowing in THIS direction = blowing out (helps HRs).
 # Source: Statcast park geometry data / baseball-reference park factors.
 _BALLPARK_CF_BEARING: dict[str, float] = {
-    "NYY": 42,   "BOS": 90,   "CHC": 180,  "WSH": 0,    "BAL": 315,
-    "TOR": 270,  "NYM": 0,    "PHI": 315,  "ATL": 315,  "MIA": 0,
-    "CIN": 0,    "PIT": 270,  "STL": 0,    "MIL": 270,  "CHW": 315,
-    "DET": 315,  "CLE": 315,  "MIN": 0,    "KC":  270,  "TEX": 45,
-    "HOU": 315,  "LAA": 315,  "OAK": 270,  "SEA": 315,  "SF":  270,
-    "LAD": 315,  "ARI": 315,  "COL": 315,  "SD":  315,  "TB":  0,
+    "NYY": 42,
+    "BOS": 90,
+    "CHC": 180,
+    "WSH": 0,
+    "BAL": 315,
+    "TOR": 270,
+    "NYM": 0,
+    "PHI": 315,
+    "ATL": 315,
+    "MIA": 0,
+    "CIN": 0,
+    "PIT": 270,
+    "STL": 0,
+    "MIL": 270,
+    "CHW": 315,
+    "DET": 315,
+    "CLE": 315,
+    "MIN": 0,
+    "KC": 270,
+    "TEX": 45,
+    "HOU": 315,
+    "LAA": 315,
+    "OAK": 270,
+    "SEA": 315,
+    "SF": 270,
+    "LAD": 315,
+    "ARI": 315,
+    "COL": 315,
+    "SD": 315,
+    "TB": 0,
 }
 
 # Indoor/retractable-roof parks where weather is irrelevant.
@@ -44,21 +69,26 @@ _INDOOR_PARKS: set[str] = {"TB", "MIA", "HOU", "MIN", "ARI", "TOR", "SEA"}
 def ingest_weather_for_upcoming(session: Session, lookahead_days: int = 5) -> IngestResult:
     """Fetch weather for all MLB games scheduled in the next N days."""
     from datetime import timedelta
+
     result = IngestResult()
 
     sport = session.query(Sport).filter_by(code="mlb").first()
     if sport is None:
         return result
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff = now + timedelta(days=lookahead_days)
 
-    games = session.query(Game).filter(
-        Game.sport_id == sport.id,
-        Game.scheduled_utc >= now,
-        Game.scheduled_utc <= cutoff,
-        Game.status != "final",
-    ).all()
+    games = (
+        session.query(Game)
+        .filter(
+            Game.sport_id == sport.id,
+            Game.scheduled_utc >= now,
+            Game.scheduled_utc <= cutoff,
+            Game.status != "final",
+        )
+        .all()
+    )
 
     for game in games:
         # Skip if already have weather for this game.
@@ -91,15 +121,17 @@ def ingest_weather_for_upcoming(session: Session, lookahead_days: int = 5) -> In
             existing.fetched_at = now
             result.rows_updated += 1
         else:
-            session.add(GameWeather(
-                game_id=game.id,
-                temp_f=wx.get("temp_f"),
-                wind_mph=wx.get("wind_mph"),
-                wind_bearing=wx.get("wind_bearing"),
-                precip_prob=wx.get("precip_prob"),
-                conditions=wx.get("conditions"),
-                fetched_at=now,
-            ))
+            session.add(
+                GameWeather(
+                    game_id=game.id,
+                    temp_f=wx.get("temp_f"),
+                    wind_mph=wx.get("wind_mph"),
+                    wind_bearing=wx.get("wind_bearing"),
+                    precip_prob=wx.get("precip_prob"),
+                    conditions=wx.get("conditions"),
+                    fetched_at=now,
+                )
+            )
             result.rows_inserted += 1
 
     session.flush()
@@ -171,6 +203,7 @@ def wind_out_factor(wind_mph: float, wind_bearing: float, park_abbrev: str) -> f
        0 = crosswind or calm
     """
     import math
+
     cf_bearing = _BALLPARK_CF_BEARING.get(park_abbrev)
     if cf_bearing is None or wind_mph < 2:
         return 0.0
@@ -181,6 +214,6 @@ def wind_out_factor(wind_mph: float, wind_bearing: float, park_abbrev: str) -> f
         diff = 360 - diff
 
     # diff=0 means wind blowing toward CF (out), diff=180 means into CF (in)
-    alignment = math.cos(math.radians(diff))   # +1=out, -1=in
-    strength = min(wind_mph / 15.0, 1.0)       # cap at 15mph for normalisation
+    alignment = math.cos(math.radians(diff))  # +1=out, -1=in
+    strength = min(wind_mph / 15.0, 1.0)  # cap at 15mph for normalisation
     return round(alignment * strength, 3)

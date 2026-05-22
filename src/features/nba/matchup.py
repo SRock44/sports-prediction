@@ -3,21 +3,20 @@
 Combines home/away team features, Elo difference, H2H history,
 and returns a flat feature dict ready for XGBoost.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
 
-import numpy as np
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.core.logging import get_logger
 from src.features.common import (
     compute_elo_series,
-    load_team_game_stats_before,
-    load_game_odds,
     haversine_km,
+    load_game_odds,
 )
 from src.features.nba.team import build_team_features
 
@@ -50,12 +49,22 @@ def build_matchup_features(
 
     # ── Team-level features ───────────────────────────────────────────────────
     home_feats = build_team_features(
-        session, home_team_id, as_of, home_elo,
-        opponent_id=away_team_id, is_home=True, current_venue_lon=venue_lon,
+        session,
+        home_team_id,
+        as_of,
+        home_elo,
+        opponent_id=away_team_id,
+        is_home=True,
+        current_venue_lon=venue_lon,
     )
     away_feats = build_team_features(
-        session, away_team_id, as_of, away_elo,
-        opponent_id=home_team_id, is_home=False, current_venue_lon=venue_lon,
+        session,
+        away_team_id,
+        as_of,
+        away_elo,
+        opponent_id=home_team_id,
+        is_home=False,
+        current_venue_lon=venue_lon,
     )
 
     # Prefix team features
@@ -90,10 +99,14 @@ def build_matchup_features(
     matchup["streak_diff"] = home_feats["streak"] - away_feats["streak"]
     matchup["b2b_diff"] = home_feats["b2b"] - away_feats["b2b"]
     matchup["schedule_load_diff"] = (
-        home_feats["three_in_four"] + home_feats["four_in_six"]
-        - away_feats["three_in_four"] - away_feats["four_in_six"]
+        home_feats["three_in_four"]
+        + home_feats["four_in_six"]
+        - away_feats["three_in_four"]
+        - away_feats["four_in_six"]
     )
-    matchup["starter_avail_diff"] = home_feats["starter_availability"] - away_feats["starter_availability"]
+    matchup["starter_avail_diff"] = (
+        home_feats["starter_availability"] - away_feats["starter_availability"]
+    )
 
     # ── Head-to-head (last 5 regular season meetings) ─────────────────────────
     h2h = _get_h2h(session, home_team_id, away_team_id, as_of, limit=5)
@@ -107,8 +120,12 @@ def build_matchup_features(
 
     # ── Roster quality cross-features ─────────────────────────────────────────
     matchup["roster_star_pts_diff"] = home_feats["roster_star_pts"] - away_feats["roster_star_pts"]
-    matchup["roster_star_ts_diff"] = home_feats["roster_star_ts_pct"] - away_feats["roster_star_ts_pct"]
-    matchup["roster_depth_diff"] = home_feats["roster_depth_score"] - away_feats["roster_depth_score"]
+    matchup["roster_star_ts_diff"] = (
+        home_feats["roster_star_ts_pct"] - away_feats["roster_star_ts_pct"]
+    )
+    matchup["roster_depth_diff"] = (
+        home_feats["roster_depth_score"] - away_feats["roster_depth_score"]
+    )
     # Away team's road fatigue relative to home rest
     matchup["road_streak_away"] = away_feats["road_game_streak"]
     matchup["tz_change_away"] = away_feats["tz_hours_change"]
@@ -134,6 +151,7 @@ def build_matchup_features(
 def _get_elo_ratings(session: Session, sport_id: int, as_of: datetime) -> dict[int, float]:
     """Replay Elo from all completed games before as_of."""
     import pandas as pd
+
     result = session.execute(
         text("""
             SELECT id, home_team_id, away_team_id, scheduled_utc,
@@ -179,9 +197,9 @@ def _get_h2h(
     rows = list(result)
     home_wins = 0
     for row in rows:
-        if row.home_team_id == home_team_id and row.home_score > row.away_score:
-            home_wins += 1
-        elif row.home_team_id == away_team_id and row.away_score > row.home_score:
+        if (row.home_team_id == home_team_id and row.home_score > row.away_score) or (
+            row.home_team_id == away_team_id and row.away_score > row.home_score
+        ):
             home_wins += 1
     return {"home_wins": home_wins, "total": len(rows)}
 
@@ -189,7 +207,9 @@ def _get_h2h(
 def _get_venue_lon(session: Session, game_id: int) -> float | None:
     """Return longitude of a game's venue."""
     result = session.execute(
-        text("SELECT v.lon FROM games g JOIN venues v ON v.id = g.venue_id WHERE g.id = :gid AND v.lon IS NOT NULL"),
+        text(
+            "SELECT v.lon FROM games g JOIN venues v ON v.id = g.venue_id WHERE g.id = :gid AND v.lon IS NOT NULL"
+        ),
         {"gid": game_id},
     ).first()
     return float(result.lon) if result else None
@@ -203,9 +223,9 @@ def _get_referee_features(session: Session, game_id: int) -> dict[str, Any]:
     Gracefully returns defaults if data isn't available yet.
     """
     defaults = {
-        "ref_foul_rate": 42.0,   # avg fouls called per game
+        "ref_foul_rate": 42.0,  # avg fouls called per game
         "ref_pace_factor": 1.0,  # relative pace vs league avg
-        "ref_home_win_pct": 0.5, # how often home team wins with this crew
+        "ref_home_win_pct": 0.5,  # how often home team wins with this crew
     }
     try:
         game_meta = session.execute(

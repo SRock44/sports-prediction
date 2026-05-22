@@ -1,7 +1,8 @@
 """Query helpers for predictions and model records."""
+
 from __future__ import annotations
 
-from sqlalchemy import select, and_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -12,6 +13,7 @@ async def get_active_model(
     session: AsyncSession, sport_code: str, kind: str, target: str
 ) -> ModelRecord | None:
     from src.db.models.sport import Sport
+
     result = await session.execute(
         select(ModelRecord)
         .join(Sport, ModelRecord.sport_id == Sport.id)
@@ -27,9 +29,7 @@ async def get_active_model(
     return result.scalar_one_or_none()
 
 
-async def get_predictions_for_game(
-    session: AsyncSession, game_id: int
-) -> list[Prediction]:
+async def get_predictions_for_game(session: AsyncSession, game_id: int) -> list[Prediction]:
     result = await session.execute(
         select(Prediction)
         .where(Prediction.game_id == game_id)

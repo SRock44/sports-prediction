@@ -1,13 +1,12 @@
 """Poll live NBA game state during active game windows."""
+
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from src.core.logging import get_logger
-from src.core.time import utc_now
 from src.db.models import Game, Sport
 from src.ingest.nba.client import get_live_scoreboard
 
@@ -19,8 +18,7 @@ _GAME_WINDOW_HOURS_AFTER = 4.0
 
 def is_in_game_window() -> bool:
     """Return True if any NBA game is likely live right now."""
-    now = utc_now()
-    # NBA games are typically 19:00–23:59 ET → 00:00–05:00 UTC
+    # NBA games are typically 19:00-23:59 ET -> 00:00-05:00 UTC
     # Broad window check; specific check is done per game below
     return True  # polled tasks check individual game status
 
@@ -45,9 +43,7 @@ def update_live_scores(session: Session) -> dict[str, Any]:
         if not game_id_ext:
             continue
 
-        game = session.query(Game).filter_by(
-            sport_id=sport.id, external_id=game_id_ext
-        ).first()
+        game = session.query(Game).filter_by(sport_id=sport.id, external_id=game_id_ext).first()
         if game is None:
             continue
 

@@ -1,18 +1,18 @@
 """GET /v1/predictions/game/{id}, /v1/predictions/props/{id}, /v1/predictions/player/{id}"""
+
 from __future__ import annotations
 
-from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import require_scope
-from src.db.session import get_async_session
 from src.db.repositories.predictions import (
-    get_predictions_for_game,
     get_player_prediction,
+    get_predictions_for_game,
 )
+from src.db.session import get_async_session
 
 router = APIRouter(tags=["predictions"])
 
@@ -28,7 +28,9 @@ async def game_prediction(
     winner_preds = [p for p in preds if p.target == "home_won" and p.player_id is None]
 
     if not winner_preds:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No winner prediction found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No winner prediction found"
+        )
 
     p = winner_preds[0]
     return {

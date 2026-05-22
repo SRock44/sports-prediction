@@ -1,24 +1,23 @@
 """Shared ingest infrastructure: rate-limited HTTP client, bulk upserter, result type."""
+
 from __future__ import annotations
 
 import hashlib
 import time
-from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from threading import Semaphore
 from typing import Any, TypeVar
 
 import httpx
+from sqlalchemy import literal_column
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.orm import Session
 from tenacity import (
     retry,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    before_sleep_log,
 )
-from sqlalchemy import literal_column
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.orm import Session
 
 from src.core.logging import get_logger
 
@@ -28,6 +27,7 @@ T = TypeVar("T")
 
 # ── Result type ───────────────────────────────────────────────────────────────
 
+
 @dataclass
 class IngestResult:
     rows_inserted: int = 0
@@ -36,7 +36,7 @@ class IngestResult:
     last_external_id: str | None = None
     errors: list[str] = field(default_factory=list)
 
-    def __iadd__(self, other: "IngestResult") -> "IngestResult":
+    def __iadd__(self, other: IngestResult) -> IngestResult:
         self.rows_inserted += other.rows_inserted
         self.rows_updated += other.rows_updated
         self.rows_skipped += other.rows_skipped
@@ -51,6 +51,7 @@ _NBA_USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
     "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0",
 ]
+
 
 class RateLimitedClient:
     """Token-bucket HTTP client with retry and UA rotation.
@@ -113,7 +114,7 @@ class RateLimitedClient:
     def close(self) -> None:
         self._client.close()
 
-    def __enter__(self) -> "RateLimitedClient":
+    def __enter__(self) -> RateLimitedClient:
         return self
 
     def __exit__(self, *args: Any) -> None:
@@ -121,6 +122,7 @@ class RateLimitedClient:
 
 
 # ── Bulk upsert helper ────────────────────────────────────────────────────────
+
 
 class Upserter:
     """Postgres INSERT … ON CONFLICT DO UPDATE wrapper."""
@@ -149,7 +151,7 @@ class Upserter:
             stmt = stmt.on_conflict_do_update(
                 index_elements=self._conflict_columns,
                 set_=update_cols,
-            # xmax = 0 means the row was freshly inserted; non-zero means it was updated.
+                # xmax = 0 means the row was freshly inserted; non-zero means it was updated.
             ).returning(literal_column("(xmax = 0)::bool").label("was_inserted"))
 
             rows_returned = self._session.execute(stmt).fetchall()
@@ -164,8 +166,10 @@ class Upserter:
 
 # ── Checksum helper ───────────────────────────────────────────────────────────
 
+
 def dict_hash(d: dict[str, Any]) -> str:
     """Stable SHA-256 of a JSON-serialisable dict. Used for features_hash."""
     import json
+
     serialised = json.dumps(d, sort_keys=True, default=str)
     return hashlib.sha256(serialised.encode()).hexdigest()

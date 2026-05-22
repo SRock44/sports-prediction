@@ -10,22 +10,24 @@ Key properties:
 - Exponential recency sample weights anchored to training set end date
 - Champion/challenger promotion gate
 """
+
 from __future__ import annotations
 
 import os
 import time
+
 import numpy as np
-import pandas as pd
 import optuna
+import pandas as pd
 import xgboost as xgb
 from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import log_loss
 
 from src.core.logging import get_logger
 from src.core.time import utc_now
-from src.features.common import exponential_decay_weight, feature_spec_hash
+from src.features.common import exponential_decay_weight
 from src.models.eval.metrics import compute_all_winner_metrics
-from src.models.registry import log_model_run, get_run_metrics
+from src.models.registry import log_model_run
 
 log = get_logger(__name__)
 
@@ -33,6 +35,7 @@ _LAMBDA = {"nba": 0.30, "mlb": 0.20}
 
 try:
     import lightgbm as lgb
+
     _HAS_LGB = True
 except ImportError:
     _HAS_LGB = False
@@ -40,6 +43,7 @@ except ImportError:
 # Use GPU if available
 try:
     import subprocess
+
     _GPU = subprocess.run(["nvidia-smi"], capture_output=True).returncode == 0
 except Exception:
     _GPU = False
@@ -50,18 +54,20 @@ _LGB_DEVICE = "cpu"  # LightGBM GPU requires OpenCL, not CUDA; CPU is fast enoug
 
 def _optuna_callback(model_tag: str, n_trials: int, start_time: float):
     """Optuna callback: prints one line per trial."""
+
     def _cb(study: optuna.Study, trial: optuna.trial.FrozenTrial) -> None:
         elapsed = time.time() - start_time
         is_best = trial.value == study.best_value
         marker = " ◀ best" if is_best else ""
         print(
-            f"  [{model_tag}] trial {trial.number+1:>4}/{n_trials}"
+            f"  [{model_tag}] trial {trial.number + 1:>4}/{n_trials}"
             f"  loss={trial.value:.5f}"
             f"  best={study.best_value:.5f}"
             f"  elapsed={elapsed:.0f}s"
             f"{marker}",
             flush=True,
         )
+
     return _cb
 
 
@@ -81,8 +87,9 @@ class _XGBProgressCallback(xgb.callback.TrainingCallback):
                     val_loss = ds_metrics["logloss"][-1]
             elapsed = time.time() - self._start
             print(
-                f"  [{self.tag}] round {epoch+1:>5}"
-                f"  val_loss={val_loss:.5f}" if val_loss else f"  [{self.tag}] round {epoch+1:>5}",
+                f"  [{self.tag}] round {epoch + 1:>5}  val_loss={val_loss:.5f}"
+                if val_loss
+                else f"  [{self.tag}] round {epoch + 1:>5}",
                 f"  elapsed={elapsed:.0f}s",
                 flush=True,
             )
@@ -126,9 +133,7 @@ class IsotonicCalibratedEnsemble:
         return (self.predict_proba(X)[:, 1] >= 0.5).astype(int)
 
 
-def _build_cv_folds(
-    X: np.ndarray, y: np.ndarray, w: np.ndarray, n_folds: int = 5
-) -> list[tuple]:
+def _build_cv_folds(X: np.ndarray, y: np.ndarray, w: np.ndarray, n_folds: int = 5) -> list[tuple]:
     """Build expanding-window time-series CV folds (data must be sorted by date)."""
     n = len(X)
     fold_size = n // (n_folds + 1)
@@ -138,10 +143,16 @@ def _build_cv_folds(
         val_end = (i + 1) * fold_size
         if val_end > n:
             break
-        folds.append((
-            X[:tr_end], y[:tr_end], w[:tr_end],
-            X[tr_end:val_end], y[tr_end:val_end], w[tr_end:val_end],
-        ))
+        folds.append(
+            (
+                X[:tr_end],
+                y[:tr_end],
+                w[:tr_end],
+                X[tr_end:val_end],
+                y[tr_end:val_end],
+                w[tr_end:val_end],
+            )
+        )
     return folds
 
 
@@ -181,14 +192,23 @@ def train_winner_model(
     w_calib = make_weights(calib_part)
 
     cv_folds = _build_cv_folds(X_train, y_train, w_train, n_folds=5)
-    log.info("training.start", sport=sport, n_train=len(train_part), n_calib=len(calib_part),
-             n_hold=len(holdout_df), n_cv_folds=len(cv_folds), n_trials=n_optuna_trials)
+    log.info(
+        "training.start",
+        sport=sport,
+        n_train=len(train_part),
+        n_calib=len(calib_part),
+        n_hold=len(holdout_df),
+        n_cv_folds=len(cv_folds),
+        n_trials=n_optuna_trials,
+    )
 
-    print(f"\n{'='*65}")
+    print(f"\n{'=' * 65}")
     print(f"  Training {sport.upper()} winner model")
     print(f"  Train: {len(train_part):,}  Calib: {len(calib_part):,}  Holdout: {len(holdout_df):,}")
-    print(f"  CV folds: {len(cv_folds)}  Optuna trials: {n_optuna_trials}  Device: {_XGB_DEVICE.upper()}")
-    print(f"{'='*65}\n")
+    print(
+        f"  CV folds: {len(cv_folds)}  Optuna trials: {n_optuna_trials}  Device: {_XGB_DEVICE.upper()}"
+    )
+    print(f"{'=' * 65}\n")
 
     # ── XGBoost Optuna search ─────────────────────────────────────────────────
     def xgb_objective(trial: optuna.Trial) -> float:
@@ -221,6 +241,7 @@ def train_winner_model(
 
     # ── Load saved params or run Optuna search ───────────────────────────────
     import json
+
     _params_path = f"reports/{sport}_winner_xgb_params.json"
     os.makedirs("reports", exist_ok=True)
 
@@ -235,7 +256,9 @@ def train_winner_model(
         pruner = optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=0)
         xgb_study = optuna.create_study(direction="minimize", pruner=pruner)
         _actual_trials = n_optuna_trials if n_optuna_trials > 0 else 50
-        print(f"[XGBoost] Starting Optuna search — {_actual_trials} trials, 5-fold walk-forward CV\n")
+        print(
+            f"[XGBoost] Starting Optuna search — {_actual_trials} trials, 5-fold walk-forward CV\n"
+        )
         _xgb_t0 = time.time()
         xgb_study.optimize(
             xgb_objective,
@@ -244,10 +267,15 @@ def train_winner_model(
             callbacks=[_optuna_callback("XGB", _actual_trials, _xgb_t0)],
         )
         best_xgb_params = xgb_study.best_params
-        print(f"\n[XGBoost] Search done in {time.time()-_xgb_t0:.0f}s")
+        print(f"\n[XGBoost] Search done in {time.time() - _xgb_t0:.0f}s")
         print(f"[XGBoost] Best trial: loss={xgb_study.best_value:.5f}  params={best_xgb_params}\n")
-        log.info("optuna.xgb_best", sport=sport, params=best_xgb_params,
-                 cv_loss=xgb_study.best_value, device=_XGB_DEVICE)
+        log.info(
+            "optuna.xgb_best",
+            sport=sport,
+            params=best_xgb_params,
+            cv_loss=xgb_study.best_value,
+            device=_XGB_DEVICE,
+        )
         # Save for future fast-resume runs
         with open(_params_path, "w") as _f:
             json.dump(best_xgb_params, _f, indent=2)
@@ -265,17 +293,18 @@ def train_winner_model(
         random_state=42,
         callbacks=[_XGBProgressCallback(every=200, tag="XGB early-stop")],
     )
-    print(f"[XGBoost] Early-stopping fit (max 5000 trees, stop after 50 no-improve) ...")
+    print("[XGBoost] Early-stopping fit (max 5000 trees, stop after 50 no-improve) ...")
     _es_t0 = time.time()
     _finder.fit(
-        X_train, y_train,
+        X_train,
+        y_train,
         sample_weight=w_train,
         eval_set=[(X_calib, y_calib)],
         sample_weight_eval_set=[w_calib],
         verbose=False,
     )
     best_n_trees = _finder.best_iteration or best_xgb_params["n_estimators"]
-    print(f"[XGBoost] Early stop: best_n_trees={best_n_trees}  ({time.time()-_es_t0:.0f}s)\n")
+    print(f"[XGBoost] Early stop: best_n_trees={best_n_trees}  ({time.time() - _es_t0:.0f}s)\n")
     log.info("xgb.early_stopping", sport=sport, best_n_trees=best_n_trees)
 
     # Final XGBoost on train_part with optimal tree count
@@ -291,13 +320,14 @@ def train_winner_model(
     print(f"[XGBoost] Final fit with {best_n_trees} trees ...")
     _f_t0 = time.time()
     best_xgb.fit(X_train, y_train, sample_weight=w_train, verbose=False)
-    print(f"[XGBoost] Final fit done ({time.time()-_f_t0:.0f}s)\n")
+    print(f"[XGBoost] Final fit done ({time.time() - _f_t0:.0f}s)\n")
 
     # ── Optional LightGBM search ──────────────────────────────────────────────
     lgb_clf = None
     best_lgb_params: dict = {}
 
     if _HAS_LGB:
+
         def lgb_objective(trial: optuna.Trial) -> float:
             params = {
                 "num_leaves": trial.suggest_int("num_leaves", 20, 200),
@@ -318,10 +348,13 @@ def train_winner_model(
                     random_state=42,
                     verbose=-1,
                 )
-                clf.fit(X_tr, y_tr, sample_weight=w_tr,
-                        eval_set=[(X_val, y_val)],
-                        callbacks=[lgb.early_stopping(40, verbose=False),
-                                   lgb.log_evaluation(-1)])
+                clf.fit(
+                    X_tr,
+                    y_tr,
+                    sample_weight=w_tr,
+                    eval_set=[(X_val, y_val)],
+                    callbacks=[lgb.early_stopping(40, verbose=False), lgb.log_evaluation(-1)],
+                )
                 proba = clf.predict_proba(X_val)[:, 1]
                 fold_losses.append(float(log_loss(y_val, proba, sample_weight=w_val)))
             return float(np.mean(fold_losses))
@@ -338,7 +371,9 @@ def train_winner_model(
             _lgb_actual_trials = _lgb_actual_trials or 200
             _lgb_pruner = optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=0)
             lgb_study = optuna.create_study(direction="minimize", pruner=_lgb_pruner)
-            print(f"[LightGBM] Starting Optuna search — {_lgb_actual_trials} trials, 5-fold walk-forward CV\n")
+            print(
+                f"[LightGBM] Starting Optuna search — {_lgb_actual_trials} trials, 5-fold walk-forward CV\n"
+            )
             _lgb_t0 = time.time()
             lgb_study.optimize(
                 lgb_objective,
@@ -347,9 +382,13 @@ def train_winner_model(
                 callbacks=[_optuna_callback("LGB", _lgb_actual_trials, _lgb_t0)],
             )
             best_lgb_params = lgb_study.best_params
-            print(f"\n[LightGBM] Search done in {time.time()-_lgb_t0:.0f}s")
-            print(f"[LightGBM] Best trial: loss={lgb_study.best_value:.5f}  params={best_lgb_params}\n")
-            log.info("optuna.lgb_best", sport=sport, params=best_lgb_params, cv_loss=lgb_study.best_value)
+            print(f"\n[LightGBM] Search done in {time.time() - _lgb_t0:.0f}s")
+            print(
+                f"[LightGBM] Best trial: loss={lgb_study.best_value:.5f}  params={best_lgb_params}\n"
+            )
+            log.info(
+                "optuna.lgb_best", sport=sport, params=best_lgb_params, cv_loss=lgb_study.best_value
+            )
             with open(_lgb_params_path, "w") as _f:
                 json.dump(best_lgb_params, _f, indent=2)
             print(f"[LightGBM] Saved best params to {_lgb_params_path}\n")
@@ -362,10 +401,11 @@ def train_winner_model(
             random_state=42,
             verbose=-1,
         )
-        print(f"[LightGBM] Final fit with early stopping (max 5000 trees) ...")
+        print("[LightGBM] Final fit with early stopping (max 5000 trees) ...")
         _lgbf_t0 = time.time()
         lgb_clf.fit(
-            X_train, y_train,
+            X_train,
+            y_train,
             sample_weight=w_train,
             eval_set=[(X_calib, y_calib)],
             callbacks=[
@@ -374,7 +414,9 @@ def train_winner_model(
             ],
         )
         lgb_best_iter = getattr(lgb_clf, "best_iteration_", "n/a")
-        print(f"[LightGBM] Final fit done — best_n_trees={lgb_best_iter}  ({time.time()-_lgbf_t0:.0f}s)\n")
+        print(
+            f"[LightGBM] Final fit done — best_n_trees={lgb_best_iter}  ({time.time() - _lgbf_t0:.0f}s)\n"
+        )
         log.info("lgb.best_iteration", sport=sport, n_trees=lgb_best_iter)
 
     # ── Ensemble + manual isotonic calibration ────────────────────────────────
@@ -399,7 +441,7 @@ def train_winner_model(
     print(f"[Eval] Scoring holdout ({len(y_hold):,} games) ...")
     proba_hold = calibrated.predict_proba(X_hold)[:, 1]
     metrics = compute_all_winner_metrics(y_hold, proba_hold)
-    print(f"\n{'='*65}")
+    print(f"\n{'=' * 65}")
     print(f"  {sport.upper()} Holdout Results")
     print(f"  Accuracy : {metrics.get('accuracy', 0):.4f}")
     print(f"  Log-loss : {metrics.get('logloss', 0):.5f}")
@@ -407,7 +449,7 @@ def train_winner_model(
     print(f"  ECE      : {metrics.get('ece', 0):.5f}")
     print(f"  N samples: {metrics.get('n_samples', len(y_hold)):,}")
     print(f"  Ensemble : {'XGB+LGB' if lgb_clf is not None else 'XGB only'}")
-    print(f"{'='*65}\n")
+    print(f"{'=' * 65}\n")
     log.info("winner.holdout_metrics", sport=sport, **metrics)
 
     # ── Log to MLflow ─────────────────────────────────────────────────────────
@@ -454,7 +496,10 @@ def should_promote(
     champ_brier = champion_metrics.get("brier", 999)
 
     if chall_ll >= champ_ll - min_logloss_improvement:
-        return False, f"log-loss {chall_ll:.4f} not better than champion {champ_ll:.4f} by {min_logloss_improvement}"
+        return (
+            False,
+            f"log-loss {chall_ll:.4f} not better than champion {champ_ll:.4f} by {min_logloss_improvement}",
+        )
     if chall_ece > champ_ece + max_ece_increase:
         return False, f"ECE {chall_ece:.4f} exceeds champion {champ_ece:.4f} by margin"
     if chall_brier > champ_brier:

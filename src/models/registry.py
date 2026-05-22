@@ -3,15 +3,18 @@
 MLflow is the source of truth for versioned artifacts.
 The `models` DB table is a mirror for SQL joins on predictions.
 """
+
 from __future__ import annotations
 
-import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.db.models import ModelRecord
 
 import mlflow
+import mlflow.lightgbm
 import mlflow.sklearn
 import mlflow.xgboost
-import mlflow.lightgbm
 
 from src.core.config import settings
 from src.core.logging import get_logger
@@ -40,14 +43,16 @@ def log_model_run(
     _setup_mlflow()
 
     with mlflow.start_run(run_name=run_name) as run:
-        mlflow.set_tags({
-            "sport": sport,
-            "kind": kind,
-            "target": target,
-            "training_start": training_range[0],
-            "training_end": training_range[1],
-            "n_features": len(feature_names),
-        })
+        mlflow.set_tags(
+            {
+                "sport": sport,
+                "kind": kind,
+                "target": target,
+                "training_start": training_range[0],
+                "training_end": training_range[1],
+                "n_features": len(feature_names),
+            }
+        )
         mlflow.log_params(params)
         mlflow.log_metrics(metrics)
         mlflow.log_dict({"feature_names": feature_names}, "feature_names.json")
@@ -97,7 +102,7 @@ def promote_model(
     version: str,
     metrics: dict[str, float],
     feature_spec_hash: str,
-) -> "ModelRecord":  # type: ignore[name-defined]
+) -> ModelRecord:  # type: ignore[name-defined]
     """Deactivate old active model for this (sport, kind, target), activate new one."""
     from src.core.time import utc_now
     from src.db.models import ModelRecord
@@ -128,9 +133,13 @@ def rollback_model(session: Any, sport_id: int, kind: str, target: str) -> bool:
     """Revert to the previous active model version."""
     from src.db.models import ModelRecord
 
-    models = session.query(ModelRecord).filter_by(
-        sport_id=sport_id, kind=kind, target=target
-    ).order_by(ModelRecord.trained_at.desc()).limit(2).all()
+    models = (
+        session.query(ModelRecord)
+        .filter_by(sport_id=sport_id, kind=kind, target=target)
+        .order_by(ModelRecord.trained_at.desc())
+        .limit(2)
+        .all()
+    )
 
     if len(models) < 2:
         log.warning("model.rollback_impossible", sport_id=sport_id, kind=kind, target=target)

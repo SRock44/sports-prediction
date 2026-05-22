@@ -2,12 +2,13 @@
 
 No key required. Same API their web frontend uses.
 """
+
 from __future__ import annotations
 
 from typing import Any
 
 import requests
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from src.core.logging import get_logger
 
@@ -69,7 +70,7 @@ def _parse_events(data: dict[str, Any], sport_code: str) -> list[dict[str, Any]]
     events = attachments.get("events", {})
     markets = attachments.get("markets", {})
 
-    for event_id, event in events.items():
+    for _event_id, event in events.items():
         if not _is_target_sport(event, sport_code):
             continue
 
@@ -78,9 +79,12 @@ def _parse_events(data: dict[str, Any], sport_code: str) -> list[dict[str, Any]]
         start_time = event.get("openDate", "")
 
         game = {
-            "home_team": home_team, "away_team": away_team,
+            "home_team": home_team,
+            "away_team": away_team,
             "commence_time": start_time,
-            "home_ml": None, "away_ml": None, "home_spread": None,
+            "home_ml": None,
+            "away_ml": None,
+            "home_spread": None,
         }
 
         # Look for moneyline/spread in attached markets
@@ -92,7 +96,9 @@ def _parse_events(data: dict[str, Any], sport_code: str) -> list[dict[str, Any]]
                 runners = market.get("runners", [])
                 for runner in runners:
                     win_run_line = runner.get("winRunnerOdds", {})
-                    price = _american_from_decimal(win_run_line.get("trueOdds", {}).get("decimalOdds", {}).get("decimalOdds"))
+                    price = _american_from_decimal(
+                        win_run_line.get("trueOdds", {}).get("decimalOdds", {}).get("decimalOdds")
+                    )
                     if runner.get("teamId") == event.get("homeTeamId"):
                         game["home_ml"] = price
                     else:

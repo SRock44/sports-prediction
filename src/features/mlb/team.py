@@ -1,4 +1,5 @@
 """MLB team-level feature engineering."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -11,12 +12,36 @@ from sqlalchemy.orm import Session
 from src.features.common import load_team_game_stats_before, rolling_mean
 
 _PARK_FACTORS: dict[str, float] = {
-    "COL": 1.15, "CIN": 1.06, "TEX": 1.05, "HOU": 1.04, "BOS": 1.03,
-    "CHC": 1.02, "MIL": 1.01, "ARI": 1.00, "NYY": 0.99, "PHI": 0.98,
-    "ATL": 0.97, "LAD": 0.97, "STL": 0.97, "SD": 0.96, "SF": 0.95,
-    "SEA": 0.94, "MIN": 0.97, "CWS": 1.00, "DET": 0.98, "CLE": 0.98,
-    "TB": 0.98, "NYM": 0.98, "WSH": 0.99, "BAL": 1.00, "MIA": 0.96,
-    "KC": 0.97, "OAK": 0.95, "PIT": 0.97, "TOR": 1.00, "LAA": 0.97,
+    "COL": 1.15,
+    "CIN": 1.06,
+    "TEX": 1.05,
+    "HOU": 1.04,
+    "BOS": 1.03,
+    "CHC": 1.02,
+    "MIL": 1.01,
+    "ARI": 1.00,
+    "NYY": 0.99,
+    "PHI": 0.98,
+    "ATL": 0.97,
+    "LAD": 0.97,
+    "STL": 0.97,
+    "SD": 0.96,
+    "SF": 0.95,
+    "SEA": 0.94,
+    "MIN": 0.97,
+    "CWS": 1.00,
+    "DET": 0.98,
+    "CLE": 0.98,
+    "TB": 0.98,
+    "NYM": 0.98,
+    "WSH": 0.99,
+    "BAL": 1.00,
+    "MIA": 0.96,
+    "KC": 0.97,
+    "OAK": 0.95,
+    "PIT": 0.97,
+    "TOR": 1.00,
+    "LAA": 0.97,
 }
 
 

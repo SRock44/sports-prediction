@@ -1,4 +1,5 @@
 """Celery tasks: rebuild matchup and team features for upcoming games."""
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -8,7 +9,7 @@ from celery import shared_task
 from sqlalchemy.orm import Session
 
 from src.core.logging import get_logger
-from src.core.time import utc_now, as_of_for_game
+from src.core.time import as_of_for_game, utc_now
 from src.db.models import Game, MatchupFeature, Sport
 from src.db.session import get_sync_session
 from src.ingest.common import dict_hash
@@ -65,11 +66,7 @@ def _rebuild_features(sport_code: str) -> dict[str, Any]:
                     continue
 
                 fhash = dict_hash(features)
-                existing = (
-                    session.query(MatchupFeature)
-                    .filter_by(game_id=game.id)
-                    .first()
-                )
+                existing = session.query(MatchupFeature).filter_by(game_id=game.id).first()
                 if existing is None:
                     session.add(
                         MatchupFeature(
@@ -115,9 +112,11 @@ def _compute_matchup_features(
     try:
         if sport_code == "nba":
             from src.features.nba.matchup import build_matchup_features
+
             return build_matchup_features(session, game, as_of)
         elif sport_code == "mlb":
             from src.features.mlb.matchup import build_matchup_features
+
             return build_matchup_features(session, game, as_of)
         else:
             log.warning("feature_tasks.unknown_sport", sport=sport_code)

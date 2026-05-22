@@ -1,11 +1,11 @@
 """API key storage and request audit log."""
+
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.db.models.base import Base
@@ -28,16 +28,16 @@ class ApiKey(Base):
     @property
     def is_active(self) -> bool:
         from src.core.time import utc_now
+
         now = utc_now()
         if self.revoked_at is not None:
             return False
-        if self.expires_at is not None and self.expires_at < now:
-            return False
-        return True
+        return not (self.expires_at is not None and self.expires_at < now)
 
 
 class ApiRequest(Base):
     """Audit trail. Inserted asynchronously — never blocks a response."""
+
     __tablename__ = "api_requests"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

@@ -1,9 +1,10 @@
 """Unit tests for notification deduplication logic."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from src.notify.dedup import should_send, _key
+from src.notify.dedup import _key, should_send
 
 
 def _mock_redis(stored_value: str | None = None) -> MagicMock:

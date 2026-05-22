@@ -2,6 +2,7 @@
 
 We use MarkdownV2 formatting. All special chars must be escaped.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -64,7 +65,7 @@ def send_game_prediction(
             lo = qs.get("0.1", median - 2)
             hi = qs.get("0.9", median + 2)
             lines.append(
-                f"• {player} {target}: *{_esc(f'{median:.1f}')}* _{_esc(f'{lo:.1f}–{hi:.1f}')}_"
+                f"• {player} {target}: *{_esc(f'{median:.1f}')}* _{_esc(f'{lo:.1f}-{hi:.1f}')}_"
             )
 
     mv = _esc(prediction.get("model_version", "?"))

@@ -1,4 +1,5 @@
 """Model evaluation metrics: log-loss, Brier, ECE, pinball, coverage."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -14,7 +15,7 @@ def compute_all_winner_metrics(
         "brier": float(brier_score_loss(y_true, y_prob)),
         "accuracy": float(np.mean((y_prob >= 0.5) == y_true)),
         "ece": compute_ece(y_true, y_prob),
-        "n_samples": int(len(y_true)),
+        "n_samples": len(y_true),
     }
 
 

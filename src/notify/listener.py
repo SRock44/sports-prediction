@@ -7,6 +7,7 @@ and/or Telegram after dedup check.
 Payload emitted by the score.py pg_notify call:
   {"game_id": <int>, "target": "home_win", "probability": 0.63, "is_lineup_update": false}
 """
+
 from __future__ import annotations
 
 import json
@@ -22,10 +23,10 @@ import redis
 
 from src.core.config import get_settings
 from src.core.logging import get_logger
-from src.db.models import Game, Prediction, ModelRecord, Sport, Team
+from src.db.models import Game, ModelRecord, Prediction, Sport, Team
 from src.db.session import get_sync_session
 from src.notify import discord, telegram
-from src.notify.dedup import should_send, record_send
+from src.notify.dedup import record_send, should_send
 
 log = get_logger(__name__)
 
@@ -136,9 +137,7 @@ def _dispatch(payload: dict[str, Any], r: redis.Redis, settings: Any) -> None:
 
     for url in webhook_urls:
         try:
-            discord.send_game_prediction(
-                url, game_info, prediction, props, is_lineup_update
-            )
+            discord.send_game_prediction(url, game_info, prediction, props, is_lineup_update)
             delivered = True
         except Exception as exc:
             log.warning("notify.discord_failed", error=str(exc))
@@ -211,10 +210,10 @@ def run() -> None:
             if not _shutdown:
                 time.sleep(_RECONNECT_DELAY)
         finally:
-            try:
+            from contextlib import suppress
+
+            with suppress(Exception):
                 conn.close()  # type: ignore[possibly-undefined]
-            except Exception:
-                pass
 
     log.info("notify.stopped")
     sys.exit(0)

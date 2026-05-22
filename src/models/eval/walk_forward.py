@@ -3,6 +3,7 @@
 Rule: train on seasons [N…N+k], validate on season N+k+1.
 Never shuffle. Never allow any test sample's date to precede any training sample's date.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -24,9 +25,7 @@ def walk_forward_splits(
     seasons = sorted(df[season_col].unique())
 
     if len(seasons) < min_train_seasons + 1:
-        raise ValueError(
-            f"Need at least {min_train_seasons + 1} seasons, got {len(seasons)}"
-        )
+        raise ValueError(f"Need at least {min_train_seasons + 1} seasons, got {len(seasons)}")
 
     for i in range(min_train_seasons, len(seasons)):
         train_seasons = seasons[:i]
@@ -36,8 +35,9 @@ def walk_forward_splits(
         val_df = df[df[season_col] == val_season].copy()
 
         # Strict chronological guard — no leakage even across season boundaries
-        assert train_df[date_col].max() <= val_df[date_col].min(), \
+        assert train_df[date_col].max() <= val_df[date_col].min(), (
             f"Leakage detected in walk-forward split at season {val_season}"
+        )
 
         yield train_df, val_df
 
@@ -54,9 +54,9 @@ def rolling_window_split(
     - training_df: last `window_seasons` seasons, excluding the holdout period
     - holdout_df: last `holdout_weeks` weeks of completed games (never in training)
     """
-    import numpy as np
-    from src.core.time import utc_now
     from datetime import timedelta
+
+    from src.core.time import utc_now
 
     df = df.sort_values(date_col).reset_index(drop=True)
     seasons = sorted(df[season_col].unique())
@@ -68,8 +68,8 @@ def rolling_window_split(
     cutoff = utc_now() - timedelta(weeks=holdout_weeks)
     training_df = df[pd.to_datetime(df[date_col]) < cutoff].copy()
     holdout_df = df[
-        (pd.to_datetime(df[date_col]) >= cutoff) &
-        (df.get("status", pd.Series(["final"] * len(df))) == "final")
+        (pd.to_datetime(df[date_col]) >= cutoff)
+        & (df.get("status", pd.Series(["final"] * len(df))) == "final")
     ].copy()
 
     return training_df, holdout_df

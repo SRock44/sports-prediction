@@ -1,20 +1,18 @@
 """Ingest MLB games and box scores from MLB-StatsAPI."""
+
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
-
-from src.core.time import utc_now
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from src.core.logging import get_logger
-from src.core.time import ensure_utc
-from src.db.models import Game, Sport, Team, Venue, PlayerGameStats, TeamGameStats, Player
-from src.features.mlb.team import _PARK_FACTORS
+from src.core.time import ensure_utc, utc_now
+from src.db.models import Game, Player, PlayerGameStats, Sport, Team, TeamGameStats, Venue
 from src.ingest.common import IngestResult
-from src.ingest.mlb.client import get_schedule, get_boxscore, get_all_teams
+from src.ingest.mlb.client import get_all_teams, get_boxscore, get_schedule
 
 log = get_logger(__name__)
 
@@ -45,9 +43,9 @@ def sync_teams(session: Session, season: int) -> IngestResult:
         # Upsert the team's home venue so park-factor lookups work in features
         venue_obj: Venue | None = None
         if venue_ext_id:
-            venue_obj = session.query(Venue).filter_by(
-                sport_id=sport.id, external_id=venue_ext_id
-            ).first()
+            venue_obj = (
+                session.query(Venue).filter_by(sport_id=sport.id, external_id=venue_ext_id).first()
+            )
             if venue_obj is None:
                 venue_obj = Venue(
                     sport_id=sport.id,
@@ -140,36 +138,48 @@ def _upsert_game(session: Session, sport: Sport, g: dict[str, Any], season: int)
         try:
             scheduled_utc = ensure_utc(datetime.strptime(game_date_str[:10], "%Y-%m-%d"))
         except ValueError:
-            scheduled_utc = datetime.now(timezone.utc)
+            scheduled_utc = datetime.now(UTC)
 
     raw_status: str = g.get("status", "").lower()
-    status = "final" if "final" in raw_status else ("scheduled" if "scheduled" in raw_status else raw_status)
+    status = (
+        "final"
+        if "final" in raw_status
+        else ("scheduled" if "scheduled" in raw_status else raw_status)
+    )
 
     venue_ext_id = str(g.get("venue_id", ""))
     venue_obj = (
         session.query(Venue).filter_by(sport_id=sport.id, external_id=venue_ext_id).first()
-        if venue_ext_id else None
+        if venue_ext_id
+        else None
     )
 
-    stmt = pg_insert(Game.__table__).values(
-        sport_id=sport.id,
-        external_id=game_id,
-        season=season,
-        scheduled_utc=scheduled_utc,
-        status=status,
-        home_team_id=home_team.id,
-        away_team_id=away_team.id,
-        venue_id=venue_obj.id if venue_obj else None,
-        home_score=g.get("home_score"),
-        away_score=g.get("away_score"),
-        meta={"game_type": g.get("game_type", "R"), "double_header": g.get("doubleheader", "N")},
-    ).on_conflict_do_update(
-        index_elements=["sport_id", "external_id"],
-        set_=dict(
+    stmt = (
+        pg_insert(Game.__table__)
+        .values(
+            sport_id=sport.id,
+            external_id=game_id,
+            season=season,
+            scheduled_utc=scheduled_utc,
             status=status,
+            home_team_id=home_team.id,
+            away_team_id=away_team.id,
+            venue_id=venue_obj.id if venue_obj else None,
             home_score=g.get("home_score"),
             away_score=g.get("away_score"),
-        ),
+            meta={
+                "game_type": g.get("game_type", "R"),
+                "double_header": g.get("doubleheader", "N"),
+            },
+        )
+        .on_conflict_do_update(
+            index_elements=["sport_id", "external_id"],
+            set_=dict(
+                status=status,
+                home_score=g.get("home_score"),
+                away_score=g.get("away_score"),
+            ),
+        )
     )
     session.execute(stmt)
     return True
@@ -216,26 +226,37 @@ def ingest_box_score(session: Session, game_pk: str) -> IngestResult:
 
         team_stats_row = side_data.get("teamStats", {})
         if team and team_stats_row:
-            existing = session.query(TeamGameStats).filter_by(game_id=game.id, team_id=team.id).first()
+            existing = (
+                session.query(TeamGameStats).filter_by(game_id=game.id, team_id=team.id).first()
+            )
             if existing is None:
-                session.add(TeamGameStats(
-                    game_id=game.id, team_id=team.id,
-                    recorded_at=utc_now(), stats=team_stats_row,
-                ))
+                session.add(
+                    TeamGameStats(
+                        game_id=game.id,
+                        team_id=team.id,
+                        recorded_at=utc_now(),
+                        stats=team_stats_row,
+                    )
+                )
             else:
                 existing.stats = team_stats_row
 
         if team is None:
-            log.warning("mlb.box_score.team_not_found", game_pk=game_pk,
-                        side=side, team_ext_id=team_id_ext)
+            log.warning(
+                "mlb.box_score.team_not_found", game_pk=game_pk, side=side, team_ext_id=team_id_ext
+            )
 
-        for pid_str, p_data in side_data.get("players", {}).items():
+        for _pid_str, p_data in side_data.get("players", {}).items():
             person = p_data.get("person", {})
             player_id_ext = str(person.get("id", ""))
             if not player_id_ext:
                 continue
 
-            player = session.query(Player).filter_by(sport_id=sport.id, external_id=player_id_ext).first()
+            player = (
+                session.query(Player)
+                .filter_by(sport_id=sport.id, external_id=player_id_ext)
+                .first()
+            )
             if player is None:
                 player = Player(
                     sport_id=sport.id,
@@ -250,8 +271,12 @@ def ingest_box_score(session: Session, game_pk: str) -> IngestResult:
                 session.flush()
 
             if team is None:
-                log.warning("mlb.box_score.player_team_missing", game_pk=game_pk,
-                            player=player_id_ext, side=side)
+                log.warning(
+                    "mlb.box_score.player_team_missing",
+                    game_pk=game_pk,
+                    player=player_id_ext,
+                    side=side,
+                )
                 continue
 
             stats_payload = {
@@ -261,16 +286,21 @@ def ingest_box_score(session: Session, game_pk: str) -> IngestResult:
                 "game_status": p_data.get("gameStatus", {}),
             }
 
-            existing_pgs = session.query(PlayerGameStats).filter_by(
-                game_id=game.id, player_id=player.id
-            ).first()
+            existing_pgs = (
+                session.query(PlayerGameStats)
+                .filter_by(game_id=game.id, player_id=player.id)
+                .first()
+            )
             if existing_pgs is None:
-                session.add(PlayerGameStats(
-                    game_id=game.id, player_id=player.id,
-                    team_id=team.id,
-                    recorded_at=utc_now(),
-                    stats=stats_payload,
-                ))
+                session.add(
+                    PlayerGameStats(
+                        game_id=game.id,
+                        player_id=player.id,
+                        team_id=team.id,
+                        recorded_at=utc_now(),
+                        stats=stats_payload,
+                    )
+                )
                 result.rows_inserted += 1
             else:
                 existing_pgs.stats = stats_payload

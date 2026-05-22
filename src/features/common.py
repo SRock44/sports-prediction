@@ -3,6 +3,7 @@
 All functions enforce the as-of invariant: only data with timestamp < as_of_utc
 is used. This is the central anti-leakage guarantee.
 """
+
 from __future__ import annotations
 
 import math
@@ -76,6 +77,7 @@ def compute_elo_series(
 
 # ── Rolling windows ───────────────────────────────────────────────────────────
 
+
 def rolling_mean(
     values: list[float],
     window: int,
@@ -95,17 +97,22 @@ def exponential_decay_weight(days_ago: float, lam: float) -> float:
 
 # ── Travel distance ───────────────────────────────────────────────────────────
 
+
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance in km."""
     R = 6371.0
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
-    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    )
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
 
 # ── As-of data loader ─────────────────────────────────────────────────────────
+
 
 def load_team_game_stats_before(
     session: Session,
@@ -175,6 +182,7 @@ def load_injuries_before(
 
 # ── Odds & weather loaders ────────────────────────────────────────────────────
 
+
 def load_game_odds(session: Session, game_id: int) -> dict[str, Any]:
     """Return implied probability and spread from stored odds. Graceful on missing table."""
     try:
@@ -223,7 +231,9 @@ def load_game_weather(session: Session, game_id: int) -> dict[str, Any]:
     """Return weather features for a game. Graceful on missing table."""
     try:
         result = session.execute(
-            text("SELECT temp_f, wind_mph, wind_bearing, precip_prob FROM game_weather WHERE game_id = :gid"),
+            text(
+                "SELECT temp_f, wind_mph, wind_bearing, precip_prob FROM game_weather WHERE game_id = :gid"
+            ),
             {"gid": game_id},
         ).first()
     except Exception:
@@ -252,6 +262,7 @@ def load_team_top_player_stats(
     Used to build roster-quality features for the winner model.
     """
     from datetime import timedelta
+
     since = as_of_utc - timedelta(days=n_games * 3)  # generous window
     try:
         result = session.execute(
@@ -296,8 +307,10 @@ def load_team_top_player_stats(
 
 # ── Feature spec hash ─────────────────────────────────────────────────────────
 
+
 def feature_spec_hash(feature_names: list[str]) -> str:
     """Stable hash of the feature name list. Detects schema drift."""
     import hashlib
+
     joined = "|".join(sorted(feature_names))
     return hashlib.sha256(joined.encode()).hexdigest()

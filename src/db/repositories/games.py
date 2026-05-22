@@ -1,9 +1,10 @@
 """Query helpers for games and stats. No business logic here."""
+
 from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 

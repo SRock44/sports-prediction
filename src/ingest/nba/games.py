@@ -1,21 +1,20 @@
 """Ingest NBA games, box scores, and play-by-play into Postgres."""
+
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from src.core.logging import get_logger
-from src.core.time import nba_season_for_date, ensure_utc, utc_now
-from src.db.models import Game, Sport, Team, Venue, TeamGameStats, PlayerGameStats, Player, Play
-from src.ingest.common import IngestResult, Upserter
+from src.core.time import ensure_utc, utc_now
+from src.db.models import Game, Player, PlayerGameStats, Sport, Team, TeamGameStats
+from src.ingest.common import IngestResult
 from src.ingest.nba.client import (
-    get_league_game_finder,
-    get_box_score_traditional,
     get_box_score_advanced,
-    get_play_by_play,
+    get_box_score_traditional,
+    get_league_game_finder,
     nba_season_str,
 )
 
@@ -79,8 +78,11 @@ def _upsert_game_row(
     away_row = next((r for r in team_rows if " @ " in r.get("MATCHUP", "")), None)
 
     if home_row is None or away_row is None:
-        log.warning("nba.games.matchup_parse_failed", game_id=game_id_ext,
-                    matchups=[r.get("MATCHUP") for r in team_rows])
+        log.warning(
+            "nba.games.matchup_parse_failed",
+            game_id=game_id_ext,
+            matchups=[r.get("MATCHUP") for r in team_rows],
+        )
         return
 
     home_team = _resolve_team(session, sport, home_row)
@@ -96,9 +98,9 @@ def _upsert_game_row(
             else datetime.strptime(game_date_str, "%Y-%m-%d").replace(hour=0, minute=0)
         )
     except ValueError:
-        scheduled_utc = datetime.now(timezone.utc)
+        scheduled_utc = datetime.now(UTC)
 
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
     status = "final" if scheduled_utc <= now_utc else "scheduled"
 
     existing = session.query(Game).filter_by(sport_id=sport.id, external_id=game_id_ext).first()
@@ -186,13 +188,17 @@ def ingest_box_scores(session: Session, game_ext_id: str) -> IngestResult:
         team_id_ext = str(stats.get("traditional", {}).get("teamId", ""))
         team = session.query(Team).filter_by(sport_id=sport.id, external_id=team_id_ext).first()
         if team is None:
-            log.warning("nba.box_score.player_team_not_found", game=game_ext_id, player=pid,
-                        team_ext_id=team_id_ext)
+            log.warning(
+                "nba.box_score.player_team_not_found",
+                game=game_ext_id,
+                player=pid,
+                team_ext_id=team_id_ext,
+            )
             continue
 
-        existing_pgs = session.query(PlayerGameStats).filter_by(
-            game_id=game.id, player_id=player.id
-        ).first()
+        existing_pgs = (
+            session.query(PlayerGameStats).filter_by(game_id=game.id, player_id=player.id).first()
+        )
         if existing_pgs is None:
             pgs = PlayerGameStats(
                 game_id=game.id,
@@ -208,9 +214,7 @@ def ingest_box_scores(session: Session, game_ext_id: str) -> IngestResult:
             result.rows_updated += 1
 
     # Index advanced team stats by teamId for merge below
-    team_adv_map: dict[str, dict[str, Any]] = {
-        str(r.get("teamId", "")): r for r in team_adv
-    }
+    team_adv_map: dict[str, dict[str, Any]] = {str(r.get("teamId", "")): r for r in team_adv}
 
     # Team stats — merge traditional + advanced
     for row in team_trad:
@@ -223,12 +227,13 @@ def ingest_box_scores(session: Session, game_ext_id: str) -> IngestResult:
         if team_id_ext in team_adv_map:
             merged_stats["advanced"] = team_adv_map[team_id_ext]
 
-        existing_tgs = session.query(TeamGameStats).filter_by(
-            game_id=game.id, team_id=team.id
-        ).first()
+        existing_tgs = (
+            session.query(TeamGameStats).filter_by(game_id=game.id, team_id=team.id).first()
+        )
         if existing_tgs is None:
             tgs = TeamGameStats(
-                game_id=game.id, team_id=team.id,
+                game_id=game.id,
+                team_id=team.id,
                 recorded_at=utc_now(),
                 stats=merged_stats,
             )

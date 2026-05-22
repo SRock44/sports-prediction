@@ -1,4 +1,5 @@
 """Integration test: full API key → JWT → protected endpoint flow."""
+
 from __future__ import annotations
 
 import pytest
@@ -11,9 +12,9 @@ from src.db.models.auth import ApiKey
 @pytest.fixture()
 def test_client(pg_session, monkeypatch):
     """FastAPI TestClient with a real Postgres session injected."""
-    from src.api.main import app
-    from src.db.session import get_sync_session
     from contextlib import contextmanager
+
+    from src.api.main import app
 
     @contextmanager
     def _override():

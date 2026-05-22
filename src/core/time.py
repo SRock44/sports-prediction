@@ -1,23 +1,23 @@
 """UTC-aware datetime helpers. Everything in this system is stored and compared UTC."""
+
 from __future__ import annotations
 
-from datetime import datetime, timezone, date
-from typing import overload
+from datetime import UTC, date, datetime
 
 
 def utc_now() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 def utc_from_timestamp(ts: float) -> datetime:
-    return datetime.fromtimestamp(ts, tz=timezone.utc)
+    return datetime.fromtimestamp(ts, tz=UTC)
 
 
 def ensure_utc(dt: datetime) -> datetime:
     """Attach UTC to a naive datetime, or convert an aware datetime to UTC."""
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def as_of_for_game(scheduled_utc: datetime) -> datetime:
@@ -27,6 +27,7 @@ def as_of_for_game(scheduled_utc: datetime) -> datetime:
     existed at this point in time when building features for this game.
     """
     from datetime import timedelta
+
     return scheduled_utc - timedelta(hours=1)
 
 

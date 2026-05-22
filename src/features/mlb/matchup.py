@@ -1,4 +1,5 @@
 """MLB matchup feature assembly: combines starter, bullpen, lineup, park, and Elo."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -7,8 +8,12 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from src.features.common import compute_elo_series, load_team_game_stats_before, load_game_odds, load_game_weather
-from src.features.mlb.team import build_team_features, _PARK_FACTORS
+from src.features.common import (
+    compute_elo_series,
+    load_game_odds,
+    load_game_weather,
+)
+from src.features.mlb.team import build_team_features
 
 
 def build_matchup_features(
@@ -23,6 +28,7 @@ def build_matchup_features(
         as_of: The cutoff timestamp for feature computation (typically scheduled_utc - 1h).
     """
     import pandas as pd
+
     game_id: int = game.id
     home_team_id: int = game.home_team_id
     away_team_id: int = game.away_team_id
@@ -57,8 +63,12 @@ def build_matchup_features(
     park_abbrev = (venue_row.meta or {}).get("team_abbrev") if venue_row else None
 
     # ── Team features ─────────────────────────────────────────────────────────
-    home_feats = build_team_features(session, home_team_id, as_of, home_elo, park_abbrev, is_home=True)
-    away_feats = build_team_features(session, away_team_id, as_of, away_elo, park_abbrev, is_home=False)
+    home_feats = build_team_features(
+        session, home_team_id, as_of, home_elo, park_abbrev, is_home=True
+    )
+    away_feats = build_team_features(
+        session, away_team_id, as_of, away_elo, park_abbrev, is_home=False
+    )
 
     matchup: dict[str, Any] = {}
     for k, v in home_feats.items():
@@ -90,8 +100,12 @@ def build_matchup_features(
     away_sp_id = away_sp.get("playerId") or away_sp.get("player_id") if away_sp else None
     matchup.update(_sp_rolling_form(session, home_sp_id, as_of, prefix="home_sp"))
     matchup.update(_sp_rolling_form(session, away_sp_id, as_of, prefix="away_sp"))
-    matchup["sp_form_era_diff"] = matchup.get("home_sp_form_era", 4.50) - matchup.get("away_sp_form_era", 4.50)
-    matchup["sp_form_k_pct_diff"] = matchup.get("home_sp_form_k_pct", 0.22) - matchup.get("away_sp_form_k_pct", 0.22)
+    matchup["sp_form_era_diff"] = matchup.get("home_sp_form_era", 4.50) - matchup.get(
+        "away_sp_form_era", 4.50
+    )
+    matchup["sp_form_k_pct_diff"] = matchup.get("home_sp_form_k_pct", 0.22) - matchup.get(
+        "away_sp_form_k_pct", 0.22
+    )
 
     # ── Head-to-head ──────────────────────────────────────────────────────────
     h2h = _get_h2h(session, home_team_id, away_team_id, as_of, 5)
@@ -116,6 +130,7 @@ def build_matchup_features(
         # Wind factor relative to ballpark orientation (+1 = blowing out, -1 = in)
         if park_abbrev:
             from src.ingest.mlb.weather import wind_out_factor
+
             matchup["weather_wind_out_factor"] = wind_out_factor(
                 weather.get("weather_wind_mph", 5.0),
                 weather.get("weather_wind_bearing", 180.0),
@@ -222,6 +237,7 @@ def _sp_rolling_form(
                 bb_pcts.append(float(bb) / float(bf))
 
         from src.features.common import rolling_mean
+
         return {
             f"{prefix}_form_era": rolling_mean(eras, n_starts) or 4.50,
             f"{prefix}_form_k_pct": rolling_mean(k_pcts, n_starts) or 0.22,
@@ -239,7 +255,7 @@ def _get_umpire_features(session: Session, game_id: int) -> dict[str, Any]:
     Graceful fallback to league averages if data unavailable.
     """
     defaults = {
-        "ump_k_rate": 0.215,   # strikeouts per batter faced (league avg ~21.5%)
+        "ump_k_rate": 0.215,  # strikeouts per batter faced (league avg ~21.5%)
         "ump_bb_rate": 0.082,  # walks per batter faced
         "ump_home_bias": 0.0,  # deviation from 0.5 home win pct
     }
@@ -306,7 +322,8 @@ def _get_h2h(
     )
     rows = list(result)
     wins = sum(
-        1 for r in rows
+        1
+        for r in rows
         if (r.home_team_id == home_id and r.home_score > r.away_score)
         or (r.home_team_id == away_id and r.away_score > r.home_score)
     )

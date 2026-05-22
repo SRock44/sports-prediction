@@ -1,7 +1,7 @@
 """GET /v1/health — liveness + readiness check."""
+
 from __future__ import annotations
 
-from datetime import timedelta
 from typing import Any
 
 from fastapi import APIRouter
@@ -14,8 +14,8 @@ router = APIRouter(tags=["health"])
 
 @router.get("/health")
 async def health() -> dict[str, Any]:
-    from src.db.session import async_session_factory
     from src.core.config import settings
+    from src.db.session import async_session_factory
 
     checks: dict[str, Any] = {"status": "ok", "checks": {}}
 
@@ -31,6 +31,7 @@ async def health() -> dict[str, Any]:
     # ── Redis ─────────────────────────────────────────────────────────────────
     try:
         import redis.asyncio as aioredis
+
         r = await aioredis.from_url(settings.redis_url)
         await r.ping()
         await r.aclose()
@@ -40,17 +41,17 @@ async def health() -> dict[str, Any]:
         checks["status"] = "degraded"
 
     # ── Last ingest freshness ─────────────────────────────────────────────────
-    # NBA regular season: Oct–Jun. MLB: Apr–Oct. Outside those windows the
+    # NBA regular season: Oct-Jun. MLB: Apr-Oct. Outside those windows the
     # freshness check is skipped and reported as "offseason".
-    _NBA_IN_SEASON_MONTHS = frozenset(range(1, 7)) | frozenset(range(10, 13))  # Oct-Jun
-    _MLB_IN_SEASON_MONTHS = frozenset(range(4, 11))                             # Apr-Oct
-    _SEASON_MONTHS = {"nba": _NBA_IN_SEASON_MONTHS, "mlb": _MLB_IN_SEASON_MONTHS}
+    nba_in_season_months = frozenset(range(1, 7)) | frozenset(range(10, 13))  # Oct-Jun
+    mlb_in_season_months = frozenset(range(4, 11))  # Apr-Oct
+    season_months = {"nba": nba_in_season_months, "mlb": mlb_in_season_months}
 
     try:
         async with async_session_factory() as session:
             now = utc_now()
             for sport in ("nba", "mlb"):
-                if now.month not in _SEASON_MONTHS[sport]:
+                if now.month not in season_months[sport]:
                     checks["checks"][f"{sport}_ingest_fresh"] = "offseason"
                     continue
 

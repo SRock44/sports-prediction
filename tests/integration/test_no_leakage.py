@@ -7,6 +7,7 @@ For a random sample of completed games, we:
 
 A mismatch means the feature builder touched post-game data — a leakage bug.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -17,7 +18,7 @@ from src.core.time import as_of_for_game
 @pytest.mark.integration
 def test_nba_no_future_leakage(pg_session):
     """Features must not change when post-game data is visible."""
-    from src.db.models import Game, MatchupFeature, Sport
+    from src.db.models import Game, Sport
     from src.features.nba.matchup import build_matchup_features
 
     sport = pg_session.query(Sport).filter_by(code="nba").first()
@@ -49,6 +50,7 @@ def test_nba_no_future_leakage(pg_session):
 
         # Cross-check: as_of + 1 season should give same result (no new data for past game)
         from datetime import timedelta
+
         future_as_of = as_of + timedelta(days=365)
         features_future = build_matchup_features(pg_session, game, future_as_of)
 

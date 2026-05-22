@@ -1,17 +1,19 @@
 """Unit tests for security helpers: API key hashing, JWT encode/decode, scopes."""
+
 from __future__ import annotations
 
-import time
+from datetime import UTC
 
 import pytest
+from jose import JWTError
 
 from src.core.security import (
-    generate_api_key,
-    hash_api_key,
-    verify_api_key,
     create_access_token,
     decode_access_token,
+    generate_api_key,
+    hash_api_key,
     token_has_scope,
+    verify_api_key,
 )
 
 
@@ -55,22 +57,24 @@ class TestJWT:
 
     def test_expired_token_raises(self):
         # Create a token that expires in -1 second (already expired)
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
+
         from jose import jwt
+
         from src.core.config import get_settings
 
         settings = get_settings()
-        exp = datetime.now(timezone.utc) - timedelta(seconds=1)
+        exp = datetime.now(UTC) - timedelta(seconds=1)
         payload = {"sub": "user-1", "scopes": [], "exp": int(exp.timestamp())}
         token = jwt.encode(payload, settings.secret_key, algorithm="HS256")
 
-        with pytest.raises(Exception):
+        with pytest.raises(JWTError):
             decode_access_token(token)
 
     def test_tampered_token_raises(self):
         token = create_access_token("user-1", [])
         tampered = token[:-5] + "XXXXX"
-        with pytest.raises(Exception):
+        with pytest.raises(JWTError):
             decode_access_token(tampered)
 
     def test_extra_claims_preserved(self):

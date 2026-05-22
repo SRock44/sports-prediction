@@ -9,6 +9,7 @@ No third-party aggregator (e.g. The Odds API). We hit the books directly:
 Consensus logic: average available moneyline implied probs across all books.
 Kalshi probability is stored separately — it's already a calibrated probability.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -38,15 +39,16 @@ def get_consensus_lines(sport_code: str) -> list[dict[str, Any]]:
     """
     book_lines: dict[str, list[dict[str, Any]]] = {}
 
-    _BOOKS = {
-        "dk":  ("src.ingest.odds.draftkings", "get_game_lines"),
-        "fd":  ("src.ingest.odds.fanduel",    "get_game_lines"),
-        "fan": ("src.ingest.odds.fanatics",   "get_game_lines"),
+    books = {
+        "dk": ("src.ingest.odds.draftkings", "get_game_lines"),
+        "fd": ("src.ingest.odds.fanduel", "get_game_lines"),
+        "fan": ("src.ingest.odds.fanatics", "get_game_lines"),
     }
 
-    for key, (module_path, fn_name) in _BOOKS.items():
+    for key, (module_path, fn_name) in books.items():
         try:
             import importlib
+
             mod = importlib.import_module(module_path)
             lines = getattr(mod, fn_name)(sport_code)
             book_lines[key] = lines
@@ -64,6 +66,7 @@ def get_kalshi_probs(sport_code: str) -> list[dict[str, Any]]:
     """Fetch Kalshi prediction market probabilities separately."""
     try:
         from src.ingest.odds.kalshi import get_game_markets
+
         return get_game_markets(sport_code)
     except Exception as exc:
         log.warning("odds.kalshi_failed", sport=sport_code, error=str(exc))
@@ -116,9 +119,7 @@ def _merge_all_books(
             if game.get(f"{k}_home_ml") is not None
         ]
         spreads = [
-            game[f"{k}_home_spread"]
-            for k in _BOOK_KEYS
-            if game.get(f"{k}_home_spread") is not None
+            game[f"{k}_home_spread"] for k in _BOOK_KEYS if game.get(f"{k}_home_spread") is not None
         ]
 
         game["consensus_home_implied_prob"] = sum(ml_probs) / len(ml_probs) if ml_probs else 0.5

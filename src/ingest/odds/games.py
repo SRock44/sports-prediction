@@ -1,7 +1,8 @@
 """Fetch and store opening/closing lines from DraftKings, FanDuel, and Kalshi."""
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -27,7 +28,7 @@ def ingest_odds(
         snapshot: 'open' (first fetch, ~24h before game) or 'close' (~1h before).
     """
     result = IngestResult()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     sport = session.query(Sport).filter_by(code=sport_code.lower()).first()
     if sport is None:
@@ -47,29 +48,52 @@ def ingest_odds(
         if game is None:
             continue
 
-        # Store per-book lines
-        _BOOK_MAP = [
-            ("dk",  "draftkings"),
-            ("fd",  "fanduel"),
+        book_map = [
+            ("dk", "draftkings"),
+            ("fd", "fanduel"),
             ("fan", "fanatics"),
         ]
-        for key, bookmaker in _BOOK_MAP:
+        for key, bookmaker in book_map:
             if game_data.get(f"{key}_home_ml") is not None:
-                _upsert(session, game.id, bookmaker, "h2h", snapshot,
-                        game_data[f"{key}_home_ml"], game_data.get(f"{key}_away_ml"), None, now)
+                _upsert(
+                    session,
+                    game.id,
+                    bookmaker,
+                    "h2h",
+                    snapshot,
+                    game_data[f"{key}_home_ml"],
+                    game_data.get(f"{key}_away_ml"),
+                    None,
+                    now,
+                )
                 result.rows_inserted += 1
             if game_data.get(f"{key}_home_spread") is not None:
-                _upsert(session, game.id, bookmaker, "spreads", snapshot,
-                        None, None, game_data[f"{key}_home_spread"], now)
+                _upsert(
+                    session,
+                    game.id,
+                    bookmaker,
+                    "spreads",
+                    snapshot,
+                    None,
+                    None,
+                    game_data[f"{key}_home_spread"],
+                    now,
+                )
                 result.rows_inserted += 1
 
         # Store consensus h2h (average of all available books)
         if game_data.get("consensus_home_implied_prob", 0.5) != 0.5:
-            _upsert(session, game.id, "consensus", "h2h", snapshot,
-                    _prob_to_american(game_data["consensus_home_implied_prob"]),
-                    _prob_to_american(game_data["consensus_away_implied_prob"]),
-                    game_data.get("consensus_home_spread"),
-                    now)
+            _upsert(
+                session,
+                game.id,
+                "consensus",
+                "h2h",
+                snapshot,
+                _prob_to_american(game_data["consensus_home_implied_prob"]),
+                _prob_to_american(game_data["consensus_away_implied_prob"]),
+                game_data.get("consensus_home_spread"),
+                now,
+            )
 
     # ── Kalshi prediction market probabilities ────────────────────────────────
     try:
@@ -84,13 +108,27 @@ def ingest_odds(
             continue
         prob = market.get("kalshi_implied_prob_home")
         if prob is not None:
-            _upsert(session, game.id, "kalshi", "h2h", snapshot,
-                    _prob_to_american(prob), _prob_to_american(1.0 - prob), None, now)
+            _upsert(
+                session,
+                game.id,
+                "kalshi",
+                "h2h",
+                snapshot,
+                _prob_to_american(prob),
+                _prob_to_american(1.0 - prob),
+                None,
+                now,
+            )
             result.rows_inserted += 1
 
     session.flush()
-    log.info("odds.ingest_done", sport=sport_code, snapshot=snapshot,
-             inserted=result.rows_inserted, errors=len(result.errors))
+    log.info(
+        "odds.ingest_done",
+        sport=sport_code,
+        snapshot=snapshot,
+        inserted=result.rows_inserted,
+        errors=len(result.errors),
+    )
     return result
 
 
@@ -105,16 +143,27 @@ def _upsert(
     home_spread: float | None,
     fetched_at: datetime,
 ) -> None:
-    stmt = pg_insert(GameOdds).values(
-        game_id=game_id, bookmaker=bookmaker, market=market, snapshot=snapshot,
-        home_price=home_price, away_price=away_price,
-        home_spread=home_spread, fetched_at=fetched_at,
-    ).on_conflict_do_update(
-        index_elements=["game_id", "bookmaker", "market", "snapshot"],
-        set_={
-            "home_price": home_price, "away_price": away_price,
-            "home_spread": home_spread, "fetched_at": fetched_at,
-        },
+    stmt = (
+        pg_insert(GameOdds)
+        .values(
+            game_id=game_id,
+            bookmaker=bookmaker,
+            market=market,
+            snapshot=snapshot,
+            home_price=home_price,
+            away_price=away_price,
+            home_spread=home_spread,
+            fetched_at=fetched_at,
+        )
+        .on_conflict_do_update(
+            index_elements=["game_id", "bookmaker", "market", "snapshot"],
+            set_={
+                "home_price": home_price,
+                "away_price": away_price,
+                "home_spread": home_spread,
+                "fetched_at": fetched_at,
+            },
+        )
     )
     session.execute(stmt)
 
@@ -149,10 +198,7 @@ def _match_game(session: Session, sport: Any, game_data: dict[str, Any]) -> Game
     away_key = _norm(game_data.get("away_team", ""))
 
     for g in candidates:
-        if (
-            _norm(g.home_team.name) == home_key
-            and _norm(g.away_team.name) == away_key
-        ):
+        if _norm(g.home_team.name) == home_key and _norm(g.away_team.name) == away_key:
             return g
         # Also try abbreviation match
         if (

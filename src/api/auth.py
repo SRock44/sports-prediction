@@ -1,14 +1,14 @@
 """API key → JWT exchange and key management endpoints."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.security import verify_api_key, create_access_token, needs_rehash, hash_api_key
-from src.core.time import utc_now
-from src.db.session import get_async_session
+from src.core.security import create_access_token, hash_api_key, needs_rehash, verify_api_key
 from src.db.models.auth import ApiKey
+from src.db.session import get_async_session
 
 router = APIRouter(tags=["auth"])
 
@@ -65,6 +65,7 @@ async def exchange_token(
         matched_key.key_hash = hash_api_key(body.api_key)
 
     from src.core.config import settings
+
     token = create_access_token(
         subject=str(matched_key.id),
         scopes=list(matched_key.scopes or []),

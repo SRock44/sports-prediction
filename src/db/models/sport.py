@@ -1,4 +1,5 @@
 """Core sports-domain entities: Sport, Team, Player, Venue."""
+
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -11,7 +12,6 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
-    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -48,8 +48,12 @@ class Team(Base):
     meta: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
     sport: Mapped[Sport] = relationship("Sport", back_populates="teams")
-    home_games: Mapped[list[Game]] = relationship("Game", foreign_keys="Game.home_team_id", back_populates="home_team")
-    away_games: Mapped[list[Game]] = relationship("Game", foreign_keys="Game.away_team_id", back_populates="away_team")
+    home_games: Mapped[list[Game]] = relationship(
+        "Game", foreign_keys="Game.home_team_id", back_populates="home_team"
+    )
+    away_games: Mapped[list[Game]] = relationship(
+        "Game", foreign_keys="Game.away_team_id", back_populates="away_team"
+    )
 
 
 class Player(Base):
@@ -61,7 +65,7 @@ class Player(Base):
     external_id: Mapped[str] = mapped_column(String(64), nullable=False)
     full_name: Mapped[str] = mapped_column(String(128), nullable=False)
     primary_position: Mapped[str | None] = mapped_column(String(32))
-    bats: Mapped[str | None] = mapped_column(String(1))    # MLB: L/R/S
+    bats: Mapped[str | None] = mapped_column(String(1))  # MLB: L/R/S
     throws: Mapped[str | None] = mapped_column(String(1))  # MLB: L/R
     birthdate: Mapped[date | None] = mapped_column(Date)
     meta: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
@@ -95,7 +99,9 @@ class Game(Base):
     sport_id: Mapped[int] = mapped_column(ForeignKey("sports.id"), nullable=False, index=True)
     external_id: Mapped[str] = mapped_column(String(64), nullable=False)
     season: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    scheduled_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    scheduled_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="scheduled")
     home_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), nullable=False)
     away_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), nullable=False)
@@ -105,11 +111,17 @@ class Game(Base):
     meta: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
     sport: Mapped[Sport] = relationship("Sport", back_populates="games")
-    home_team: Mapped[Team] = relationship("Team", foreign_keys=[home_team_id], back_populates="home_games")
-    away_team: Mapped[Team] = relationship("Team", foreign_keys=[away_team_id], back_populates="away_games")
+    home_team: Mapped[Team] = relationship(
+        "Team", foreign_keys=[home_team_id], back_populates="home_games"
+    )
+    away_team: Mapped[Team] = relationship(
+        "Team", foreign_keys=[away_team_id], back_populates="away_games"
+    )
     venue: Mapped[Venue | None] = relationship("Venue", back_populates="games")
     team_stats: Mapped[list[TeamGameStats]] = relationship("TeamGameStats", back_populates="game")
-    player_stats: Mapped[list[PlayerGameStats]] = relationship("PlayerGameStats", back_populates="game")
+    player_stats: Mapped[list[PlayerGameStats]] = relationship(
+        "PlayerGameStats", back_populates="game"
+    )
     plays: Mapped[list[Play]] = relationship("Play", back_populates="game")
     lineups: Mapped[list[Lineup]] = relationship("Lineup", back_populates="game")
     predictions: Mapped[list[Prediction]] = relationship("Prediction", back_populates="game")
@@ -127,7 +139,9 @@ class TeamGameStats(Base):
     game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), primary_key=True)
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), primary_key=True)
     # recorded_at is required as the TimescaleDB hypertable time dimension.
-    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
     stats: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
     game: Mapped[Game] = relationship("Game", back_populates="team_stats")
@@ -141,7 +155,9 @@ class PlayerGameStats(Base):
     player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), primary_key=True)
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), nullable=False)
     # recorded_at is required as the TimescaleDB hypertable time dimension.
-    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
     stats: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
     game: Mapped[Game] = relationship("Game", back_populates="player_stats")
@@ -151,16 +167,19 @@ class PlayerGameStats(Base):
 
 class Play(Base):
     """Individual play-by-play event. Intended as a TimescaleDB hypertable on occurred_at."""
+
     __tablename__ = "plays"
     __table_args__ = (UniqueConstraint("game_id", "action_number"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), nullable=False, index=True)
     # occurred_at is the TimescaleDB hypertable time dimension.
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
     action_number: Mapped[int] = mapped_column(Integer, nullable=False)
     period: Mapped[int] = mapped_column(Integer, nullable=False)
-    clock: Mapped[str | None] = mapped_column(String(16))   # "PT08M32.00S"
+    clock: Mapped[str | None] = mapped_column(String(16))  # "PT08M32.00S"
     action_type: Mapped[str] = mapped_column(String(64), nullable=False)
     sub_type: Mapped[str | None] = mapped_column(String(64))
     team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id"), index=True)
@@ -191,9 +210,13 @@ class Injury(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), nullable=False, index=True)
-    status: Mapped[str] = mapped_column(String(32), nullable=False)  # 'out', 'questionable', 'dtd', etc.
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # 'out', 'questionable', 'dtd', etc.
     reason: Mapped[str | None] = mapped_column(Text)
-    reported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    reported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
     expected_return_date: Mapped[date | None] = mapped_column(Date)
     source: Mapped[str] = mapped_column(String(32), nullable=False)
 

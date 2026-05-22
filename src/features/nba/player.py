@@ -1,4 +1,5 @@
 """NBA player-level feature engineering for props models."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -8,8 +9,8 @@ import numpy as np
 from sqlalchemy.orm import Session
 
 from src.features.common import (
-    load_player_game_stats_before,
     load_injuries_before,
+    load_player_game_stats_before,
     rolling_mean,
 )
 
@@ -60,8 +61,6 @@ def build_player_features(
     stat_values: list[float] = []
     per_min_values: list[float] = []
     minutes: list[float] = []
-    home_stat: list[float] = []
-    away_stat: list[float] = []
 
     path = _STAT_KEYS.get(stat, ("statistics", stat.lower()))
 

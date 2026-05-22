@@ -6,13 +6,13 @@ The official NBA injury report is published as a PDF daily at:
 We parse it with pdfplumber. The PDF format changes occasionally; the parser is
 fault-tolerant and falls back to empty on parse failure.
 """
+
 from __future__ import annotations
 
 import io
-import re
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 import pdfplumber
@@ -20,9 +20,9 @@ from sqlalchemy.orm import Session
 
 from src.core.logging import get_logger
 from src.core.time import utc_now
-from src.db.models import Player, Injury, Sport, Team
+from src.db.models import Injury, Player, Sport, Team
 from src.ingest.common import IngestResult
-from src.ingest.nba.client import get_all_teams, get_all_players, get_team_roster, nba_season_str
+from src.ingest.nba.client import get_all_teams, get_team_roster, nba_season_str
 
 log = get_logger(__name__)
 
@@ -56,7 +56,11 @@ def sync_teams(session: Session) -> IngestResult:
                 abbrev=t["abbreviation"],
                 conference=t.get("conference"),
                 division=t.get("division"),
-                meta={"city": t.get("city"), "state": t.get("state"), "year_founded": t.get("year_founded")},
+                meta={
+                    "city": t.get("city"),
+                    "state": t.get("state"),
+                    "year_founded": t.get("year_founded"),
+                },
             )
             session.add(team)
             result.rows_inserted += 1
@@ -88,16 +92,22 @@ def sync_players(session: Session, season_year: int) -> IngestResult:
             if not player_id_ext:
                 continue
 
-            existing = session.query(Player).filter_by(
-                sport_id=sport.id, external_id=player_id_ext
-            ).first()
+            existing = (
+                session.query(Player)
+                .filter_by(sport_id=sport.id, external_id=player_id_ext)
+                .first()
+            )
             if existing is None:
                 player = Player(
                     sport_id=sport.id,
                     external_id=player_id_ext,
                     full_name=row.get("PLAYER", player_id_ext),
                     primary_position=row.get("POSITION"),
-                    meta={"jersey": row.get("NUM"), "height": row.get("HEIGHT"), "weight": row.get("WEIGHT")},
+                    meta={
+                        "jersey": row.get("NUM"),
+                        "height": row.get("HEIGHT"),
+                        "weight": row.get("WEIGHT"),
+                    },
                 )
                 session.add(player)
                 result.rows_inserted += 1
@@ -139,10 +149,14 @@ def ingest_injury_report(session: Session) -> IngestResult:
 
     injuries = _parse_injury_pdf(pdf_bytes)
     for entry in injuries:
-        player = session.query(Player).filter(
-            Player.sport_id == sport.id,
-            Player.full_name.ilike(f"%{entry['player_name']}%"),
-        ).first()
+        player = (
+            session.query(Player)
+            .filter(
+                Player.sport_id == sport.id,
+                Player.full_name.ilike(f"%{entry['player_name']}%"),
+            )
+            .first()
+        )
         if player is None:
             log.debug("nba.injury.player_not_found", name=entry["player_name"])
             continue

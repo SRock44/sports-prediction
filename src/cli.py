@@ -11,13 +11,11 @@ Usage:
   python -m src.cli model rollback --sport nba --kind winner
   python -m src.cli score --sport nba
 """
+
 from __future__ import annotations
 
-import sys
-from datetime import date, timedelta
-from typing import Annotated, Optional
-
-from typing import Any
+from datetime import UTC, date, timedelta
+from typing import Annotated, Any
 
 import typer
 
@@ -37,7 +35,7 @@ def backfill(
     dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run")] = False,
 ) -> None:
     """Backfill historical game data + box scores for N seasons."""
-    from src.core.time import nba_season_for_date, mlb_season_for_date
+    from src.core.time import mlb_season_for_date, nba_season_for_date
     from src.db.session import get_sync_session
 
     today = date.today()
@@ -60,8 +58,8 @@ def backfill(
         total_inserted = total_updated = 0
 
         if sport == "nba":
-            from src.ingest.nba.players import sync_teams, sync_players
-            from src.ingest.nba.games import ingest_season_schedule, ingest_box_scores
+            from src.ingest.nba.games import ingest_season_schedule
+            from src.ingest.nba.players import sync_players, sync_teams
 
             r = sync_teams(session)
             typer.echo(f"  Teams: +{r.rows_inserted} updated={r.rows_updated}")
@@ -83,7 +81,6 @@ def backfill(
 
         elif sport == "mlb":
             from src.ingest.mlb.games import ingest_season_schedule
-            from src.ingest.mlb.players import sync_roster
 
             for season_year in season_years:
                 typer.echo(f"  Season {season_year}…", nl=False)
@@ -108,7 +105,6 @@ def train(
     trials: Annotated[int, typer.Option("--trials")] = 50,
 ) -> None:
     """Train a challenger model. Optionally promote if it beats champion."""
-    import pandas as pd
     from src.db.session import get_sync_session
 
     typer.echo(f"Training {sport.upper()} {kind} model ({trials} Optuna trials)…")
@@ -123,30 +119,44 @@ def train(
     typer.echo(f"  Training rows: {len(training_df)}  Holdout rows: {len(holdout_df)}")
 
     if kind == "winner":
-        from src.models.train_winner import train_winner_model, should_promote
+        from src.models.train_winner import should_promote, train_winner_model
+
         run_id, metrics = train_winner_model(sport, training_df, feature_names, holdout_df, trials)
         typer.echo(f"  Run ID: {run_id}")
         typer.echo(f"  Metrics: {metrics}")
 
         if promote:
-            from src.db.models import ModelRecord, Sport as SportModel
+            from src.db.models import ModelRecord
+            from src.db.models import Sport as SportModel
             from src.features.common import feature_spec_hash as compute_fsh
+
             with get_sync_session() as session:
                 sport_obj = session.query(SportModel).filter_by(code=sport).first()
                 champion = (
-                    session.query(ModelRecord)
-                    .filter_by(sport_id=sport_obj.id if sport_obj else 0, kind="winner", active=True)
-                    .first()
-                ) if sport_obj else None
+                    (
+                        session.query(ModelRecord)
+                        .filter_by(
+                            sport_id=sport_obj.id if sport_obj else 0, kind="winner", active=True
+                        )
+                        .first()
+                    )
+                    if sport_obj
+                    else None
+                )
                 champion_metrics = champion.metrics if champion else {}
                 sport_id = sport_obj.id if sport_obj else None
 
             ok, reason = should_promote(metrics, champion_metrics)
             if ok and sport_id is not None:
                 from src.models.registry import promote_model
+
                 with get_sync_session() as session:
                     promote_model(
-                        session, run_id, sport_id, kind, "home_won",
+                        session,
+                        run_id,
+                        sport_id,
+                        kind,
+                        "home_won",
                         version=run_id[:12],
                         metrics=metrics,
                         feature_spec_hash=compute_fsh(feature_names),
@@ -158,6 +168,7 @@ def train(
 
     elif kind == "props":
         from src.models.train_props import train_props_model
+
         for stat in _props_stats(sport):
             typer.echo(f"  Prop stat: {stat}…", nl=False)
             try:
@@ -166,8 +177,12 @@ def train(
                 if prop_df.empty:
                     typer.echo(" no data, skip")
                     continue
-                prop_feature_names = [c for c in prop_df.columns if c not in ("target", "y", "game_date", "season")]
-                run_id, metrics = train_props_model(sport, stat, prop_df, prop_feature_names, hold_df)
+                prop_feature_names = [
+                    c for c in prop_df.columns if c not in ("target", "y", "game_date", "season")
+                ]
+                run_id, metrics = train_props_model(
+                    sport, stat, prop_df, prop_feature_names, hold_df
+                )
                 typer.echo(f" done run={run_id[:8]} mae={metrics.get('mae_median', '?'):.3f}")
             except Exception as exc:
                 typer.echo(f" ERROR: {exc}", err=True)
@@ -188,6 +203,7 @@ def _load_training_data(
 ) -> tuple[Any, Any, list[str]]:
     """Load training + holdout DataFrames for a given sport/kind."""
     import pandas as pd
+
     from src.db.models import Game, MatchupFeature, Sport
 
     sport_obj = session.query(Sport).filter_by(code=sport).first()
@@ -232,10 +248,7 @@ def _load_training_data(
         training_df = df[df["game_date"] <= cutoff]
         holdout_df = df[df["game_date"] > cutoff]
 
-    feature_names = [
-        c for c in df.columns
-        if c not in ("y", "game_date", "season")
-    ]
+    feature_names = [c for c in df.columns if c not in ("y", "game_date", "season")]
     return training_df, holdout_df, feature_names
 
 
@@ -249,8 +262,8 @@ def eval(
 ) -> None:
     """Run walk-forward backtest and write report to reports/."""
     typer.echo(f"Running walk-forward eval for {sport.upper()} {kind}…")
-    from src.models.eval.report import generate_winner_backtest_report
     from src.db.session import get_sync_session
+    from src.models.eval.report import generate_winner_backtest_report
 
     with get_sync_session() as session:
         training_df, _, feature_names = _load_training_data(session, sport, kind)
@@ -272,8 +285,8 @@ def score(
     hours: Annotated[int, typer.Option("--hours")] = 48,
 ) -> None:
     """Score upcoming games for a sport."""
-    from src.models.score import score_upcoming_games
     from src.db.session import get_sync_session
+    from src.models.score import score_upcoming_games
 
     typer.echo(f"Scoring upcoming {sport.upper()} games (next {hours}h)…")
     with get_sync_session() as session:
@@ -289,10 +302,11 @@ def score(
 def keys_create(
     name: Annotated[str, typer.Option("--name", "-n")] = "default",
     scopes: Annotated[str, typer.Option("--scopes")] = "predictions:read",
-    expires_days: Annotated[Optional[int], typer.Option("--expires-days")] = None,
+    expires_days: Annotated[int | None, typer.Option("--expires-days")] = None,
 ) -> None:
     """Generate a new API key and print the plaintext once."""
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     from src.core.security import generate_api_key, hash_api_key
     from src.db.models.auth import ApiKey
     from src.db.session import get_sync_session
@@ -303,7 +317,7 @@ def keys_create(
 
     expires_at = None
     if expires_days is not None:
-        expires_at = datetime.now(timezone.utc) + timedelta(days=expires_days)
+        expires_at = datetime.now(UTC) + timedelta(days=expires_days)
 
     with get_sync_session() as session:
         key = ApiKey(
@@ -311,7 +325,7 @@ def keys_create(
             key_prefix=plaintext[:8],
             key_hash=hashed,
             scopes=scope_list,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             expires_at=expires_at,
         )
         session.add(key)
@@ -350,7 +364,8 @@ def keys_revoke(
     key_id: Annotated[int, typer.Argument(help="ID from 'keys list'")],
 ) -> None:
     """Revoke an API key immediately."""
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     from src.db.models.auth import ApiKey
     from src.db.session import get_sync_session
 
@@ -359,7 +374,7 @@ def keys_revoke(
         if k is None:
             typer.echo(f"Key {key_id} not found.", err=True)
             raise typer.Exit(1)
-        k.revoked_at = datetime.now(timezone.utc)
+        k.revoked_at = datetime.now(UTC)
         session.commit()
 
     typer.echo(f"Key {key_id} ({k.name}) revoked.")
@@ -408,10 +423,10 @@ def model_rollback(
     kind: Annotated[str, typer.Option("--kind")] = "winner",
 ) -> None:
     """Roll back to the previous active model version."""
-    from src.models.registry import rollback_model
-    from src.db.session import get_sync_session
-
     from src.db.models import Sport as SportModel
+    from src.db.session import get_sync_session
+    from src.models.registry import rollback_model
+
     with get_sync_session() as session:
         sport_obj = session.query(SportModel).filter_by(code=sport).first()
         if sport_obj is None:
@@ -423,7 +438,7 @@ def model_rollback(
     if success:
         typer.echo(f"Rolled back {sport.upper()} {kind} model.")
     else:
-        typer.echo(f"No previous model to roll back to.", err=True)
+        typer.echo("No previous model to roll back to.", err=True)
 
 
 @model_app.command("promote")
@@ -434,14 +449,13 @@ def model_promote(
     target: Annotated[str, typer.Option("--target")] = "home_win",
 ) -> None:
     """Force-promote an MLflow run as the active model (skips promotion gate)."""
-    from src.models.registry import promote_model
-    from src.db.session import get_sync_session
+    import json
 
     from src.db.models import Sport as SportModel
-    from src.models.registry import get_run_metrics
+    from src.db.session import get_sync_session
     from src.features.common import feature_spec_hash as compute_fsh
+    from src.models.registry import get_run_metrics, promote_model
     from src.models.score import load_model_feature_names
-    import json
 
     with get_sync_session() as session:
         sport_obj = session.query(SportModel).filter_by(code=sport).first()
@@ -456,7 +470,11 @@ def model_promote(
             feat_names = []
 
         promote_model(
-            session, run_id, sport_obj.id, kind, target,
+            session,
+            run_id,
+            sport_obj.id,
+            kind,
+            target,
             version=run_id[:12],
             metrics=run_metrics,
             feature_spec_hash=compute_fsh(feat_names),

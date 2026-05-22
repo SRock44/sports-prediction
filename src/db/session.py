@@ -3,6 +3,7 @@
 - async_session_factory  → used by FastAPI (request-scoped).
 - sync_session_factory   → used by Celery workers (thread-safe sync).
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Generator

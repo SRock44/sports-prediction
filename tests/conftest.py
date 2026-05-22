@@ -1,14 +1,16 @@
 """Shared pytest fixtures: ephemeral Postgres + Redis via testcontainers."""
+
 from __future__ import annotations
 
 import pytest
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session, sessionmaker
 
 # testcontainers is only needed in integration tests; guard the import
 try:
     from testcontainers.postgres import PostgresContainer
     from testcontainers.redis import RedisContainer
+
     HAS_TESTCONTAINERS = True
 except ImportError:
     HAS_TESTCONTAINERS = False
@@ -16,11 +18,12 @@ except ImportError:
 
 # ── Unit-test session (SQLite in-memory) ──────────────────────────────────────
 
+
 @pytest.fixture(scope="session")
 def sqlite_engine():
     """Lightweight in-memory engine for unit tests that need ORM models."""
-    from src.db.models.base import Base
     import src.db.models  # noqa: F401 — trigger all model registrations
+    from src.db.models.base import Base
 
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
@@ -40,6 +43,7 @@ def sqlite_session(sqlite_engine) -> Session:
 
 
 # ── Integration-test containers ───────────────────────────────────────────────
+
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
@@ -66,8 +70,8 @@ def redis_container():
 
 @pytest.fixture(scope="session")
 def pg_engine(pg_container):
-    from src.db.models.base import Base
     import src.db.models  # noqa: F401
+    from src.db.models.base import Base
 
     engine = create_engine(pg_container.get_connection_url())
     with engine.connect() as conn:
@@ -92,4 +96,5 @@ def pg_session(pg_engine) -> Session:
 @pytest.fixture(scope="session")
 def redis_client(redis_container):
     import redis as redis_lib
+
     return redis_lib.from_url(redis_container.get_connection_url(), decode_responses=True)

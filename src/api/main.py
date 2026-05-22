@@ -1,4 +1,5 @@
 """FastAPI application factory."""
+
 from __future__ import annotations
 
 import time
@@ -8,12 +9,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette_prometheus import PrometheusMiddleware, metrics as prometheus_metrics
+from starlette_prometheus import PrometheusMiddleware
+from starlette_prometheus import metrics as prometheus_metrics
 
+from src.api import auth
+from src.api.routes import games, health, models, predictions
 from src.core.config import settings
 from src.core.logging import configure_logging, get_logger
-from src.api.routes import games, predictions, models, health
-from src.api import auth
 
 log = get_logger(__name__)
 
@@ -72,7 +74,8 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
         key_id: int | None = getattr(request.state, "api_key_id", None)
         if key_id is not None:
             import asyncio
-            asyncio.create_task(
+
+            _task = asyncio.create_task(  # noqa: RUF006
                 _write_audit(
                     key_id=key_id,
                     route=request.url.path,
@@ -88,18 +91,20 @@ async def _write_audit(
     key_id: int, route: str, status: int, latency_ms: int, ip: str | None
 ) -> None:
     from src.core.time import utc_now
-    from src.db.session import async_session_factory
     from src.db.models.auth import ApiRequest
+    from src.db.session import async_session_factory
 
     async with async_session_factory() as session:
-        session.add(ApiRequest(
-            api_key_id=key_id,
-            route=route,
-            status=status,
-            latency_ms=latency_ms,
-            ip=ip,
-            ts=utc_now(),
-        ))
+        session.add(
+            ApiRequest(
+                api_key_id=key_id,
+                route=route,
+                status=status,
+                latency_ms=latency_ms,
+                ip=ip,
+                ts=utc_now(),
+            )
+        )
         await session.commit()
 
 

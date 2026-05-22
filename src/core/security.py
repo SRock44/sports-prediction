@@ -1,4 +1,5 @@
 """Auth primitives: Argon2 key hashing, JWT encode/decode, API key generation."""
+
 from __future__ import annotations
 
 import secrets
@@ -6,8 +7,8 @@ from datetime import timedelta
 from typing import Any
 
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHashError
-from jose import JWTError, jwt
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
+from jose import jwt
 
 from src.core.config import settings
 from src.core.time import utc_now
@@ -21,6 +22,7 @@ _hasher = PasswordHasher(
 )
 
 # ── API key utilities ─────────────────────────────────────────────────────────
+
 
 def generate_api_key() -> str:
     """Return a new plaintext API key (caller is responsible for hashing and storing)."""
@@ -44,7 +46,10 @@ def needs_rehash(hashed: str) -> bool:
 
 # ── JWT utilities ─────────────────────────────────────────────────────────────
 
-def create_access_token(subject: str, scopes: list[str], extra: dict[str, Any] | None = None) -> str:
+
+def create_access_token(
+    subject: str, scopes: list[str], extra: dict[str, Any] | None = None
+) -> str:
     now = utc_now()
     expire = now + timedelta(minutes=settings.jwt_access_token_expire_minutes)
     payload: dict[str, Any] = {
@@ -55,7 +60,9 @@ def create_access_token(subject: str, scopes: list[str], extra: dict[str, Any] |
     }
     if extra:
         payload.update(extra)
-    return jwt.encode(payload, settings.jwt_secret.get_secret_value(), algorithm=settings.jwt_algorithm)
+    return jwt.encode(
+        payload, settings.jwt_secret.get_secret_value(), algorithm=settings.jwt_algorithm
+    )
 
 
 def decode_access_token(token: str) -> dict[str, Any]:

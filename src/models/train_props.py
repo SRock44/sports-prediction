@@ -4,19 +4,19 @@ Trains one model per (sport, stat) combination.
 Outputs quantiles [0.10, 0.25, 0.50, 0.75, 0.90] for the predictive distribution.
 Implied P(over X.5) is interpolated from the quantile CDF.
 """
+
 from __future__ import annotations
 
-import numpy as np
-import pandas as pd
 import lightgbm as lgb
+import numpy as np
 import optuna
-
+import pandas as pd
 from sklearn.metrics import mean_absolute_error
 
 from src.core.logging import get_logger
 from src.core.time import utc_now
 from src.features.common import exponential_decay_weight
-from src.models.eval.metrics import compute_pinball_loss, compute_coverage
+from src.models.eval.metrics import compute_coverage, compute_pinball_loss
 from src.models.registry import log_model_run
 
 log = get_logger(__name__)
@@ -42,7 +42,6 @@ def train_props_model(
     training_df = training_df.sort_values("scheduled_utc").reset_index(drop=True)
     split_idx = int(len(training_df) * 0.9)
     train_part = training_df.iloc[:split_idx]
-    calib_part = training_df.iloc[split_idx:]
 
     X_train = train_part[feature_names].values.astype(np.float32)
     y_train = train_part["target"].values.astype(np.float32)
@@ -50,6 +49,7 @@ def train_props_model(
     y_hold = holdout_df["target"].values.astype(np.float32)
 
     now = utc_now()
+
     def weights(df: pd.DataFrame) -> np.ndarray:
         days = (now - pd.to_datetime(df["scheduled_utc"])).dt.total_seconds() / 86400
         return np.array([exponential_decay_weight(d, lam) for d in days], dtype=np.float32)
@@ -95,7 +95,7 @@ def train_props_model(
     # ── Evaluation ────────────────────────────────────────────────────────────
     metrics: dict[str, float] = {}
     for q in QUANTILES:
-        metrics[f"pinball_q{int(q*100)}"] = compute_pinball_loss(y_hold, predictions[q], q)
+        metrics[f"pinball_q{int(q * 100)}"] = compute_pinball_loss(y_hold, predictions[q], q)
     metrics["mae_median"] = float(mean_absolute_error(y_hold, predictions[0.50]))
 
     # Coverage: 80% interval should contain truth ~80% of the time
@@ -128,7 +128,9 @@ def train_props_model(
 class QuantileBundle:
     """Wraps N LightGBM quantile models into a single scikit-learn-compatible interface."""
 
-    def __init__(self, quantile_models: dict[float, lgb.LGBMRegressor], quantiles: list[float]) -> None:
+    def __init__(
+        self, quantile_models: dict[float, lgb.LGBMRegressor], quantiles: list[float]
+    ) -> None:
         self.quantile_models = quantile_models
         self.quantiles = quantiles
 

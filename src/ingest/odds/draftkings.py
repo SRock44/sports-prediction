@@ -3,12 +3,13 @@
 This is the same API their frontend uses. No key required.
 Endpoints and league IDs are stable but not officially documented.
 """
+
 from __future__ import annotations
 
 from typing import Any
 
 import requests
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from src.core.logging import get_logger
 
@@ -61,7 +62,6 @@ def _parse_events(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Parse DraftKings event groups response into normalized game dicts."""
     out: list[dict[str, Any]] = []
 
-    event_groups = data.get("eventGroup", {}).get("offerCategories", [])
     # Find game lines category (moneyline + spread)
     offers_map: dict[str, dict[str, Any]] = {}
 
@@ -72,9 +72,11 @@ def _parse_events(data: dict[str, Any]) -> list[dict[str, Any]]:
         away = event_group.get("teamName2", "")
         start_time = event_group.get("startDate", "")
         offers_map[event_id] = {
-            "home_team": home, "away_team": away,
+            "home_team": home,
+            "away_team": away,
             "commence_time": start_time,
-            "home_ml": None, "away_ml": None,
+            "home_ml": None,
+            "away_ml": None,
             "home_spread": None,
         }
 

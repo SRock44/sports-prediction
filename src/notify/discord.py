@@ -1,4 +1,5 @@
 """Discord webhook notifier with rich embeds."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -34,7 +35,7 @@ def send_game_prediction(
     description_lines = [
         f"**{scheduled} UTC**",
         "",
-        f"**Win Probability**",
+        "**Win Probability**",
         f"`{bar}`",
         f"**{home_team}** {home_prob:.1%} · **{away_team}** {away_prob:.1%}",
     ]
@@ -48,7 +49,7 @@ def send_game_prediction(
             qs = prop.get("quantiles") or {}
             lo = qs.get("0.1", median - 2)
             hi = qs.get("0.9", median + 2)
-            description_lines.append(f"• {player} {target}: **{median:.1f}** _{lo:.1f}–{hi:.1f}_")
+            description_lines.append(f"• {player} {target}: **{median:.1f}** _{lo:.1f}-{hi:.1f}_")
 
     embed = {
         "title": title,

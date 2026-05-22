@@ -3,21 +3,20 @@
 Writes a Markdown report to reports/{sport}_{kind}_{date}.md with per-season
 metrics, calibration data, and sanity checks.
 """
+
 from __future__ import annotations
 
-import json
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from src.core.time import utc_now
-from src.models.eval.metrics import compute_all_winner_metrics, compute_ece
-from src.models.eval.walk_forward import walk_forward_splits
-from src.models.train_winner import train_winner_model, should_promote
 from src.core.logging import get_logger
+from src.core.time import utc_now
+from src.models.eval.metrics import compute_all_winner_metrics
+from src.models.eval.walk_forward import walk_forward_splits
+from src.models.train_winner import train_winner_model
 
 log = get_logger(__name__)
 REPORTS_DIR = Path("reports")
@@ -45,7 +44,9 @@ def generate_winner_backtest_report(
             # Use a separate MLflow experiment so backtest runs don't pollute
             # the production experiment that promote_model queries.
             import mlflow
+
             from src.core.config import settings
+
             mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
             mlflow.set_experiment(f"{settings.mlflow_experiment_name}_backtest")
 
@@ -58,6 +59,7 @@ def generate_winner_backtest_report(
                 run_name=f"{sport}_backtest_fold{fold_idx}",
             )
             from src.models.registry import load_model
+
             model = load_model(run_id, framework="sklearn")
             X_val = val_df[feature_names].values.astype(np.float32)
             y_val = val_df["target"].values.astype(int)
@@ -113,7 +115,7 @@ def _write_report(
             f"- **Mean log-loss**: {avg_ll:.4f}",
             f"- **Mean Brier**: {avg_brier:.4f}",
             f"- **Mean accuracy**: {avg_acc:.3f}",
-            f"- **Realistic baseline** ({sport} moneyline): NBA ~0.680–0.685 log-loss, MLB ~0.690",
+            f"- **Realistic baseline** ({sport} moneyline): NBA ~0.680-0.685 log-loss, MLB ~0.690",
             "",
             "## Sanity Checks",
             "",
@@ -122,7 +124,9 @@ def _write_report(
             "",
             "## Features Used",
             "",
-            f"{len(feature_names)} features: " + ", ".join(feature_names[:20]) + (" ..." if len(feature_names) > 20 else ""),
+            f"{len(feature_names)} features: "
+            + ", ".join(feature_names[:20])
+            + (" ..." if len(feature_names) > 20 else ""),
         ]
 
     path.write_text("\n".join(lines), encoding="utf-8")

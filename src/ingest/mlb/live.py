@@ -1,4 +1,5 @@
 """Poll live MLB game state via GUMBO feed."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -19,18 +20,24 @@ def update_live_scores(session: Session) -> dict[str, Any]:
         return {"updated": 0}
 
     # Fetch only games in 'scheduled' or 'in_progress' status today
-    from src.core.time import utc_now
     from datetime import timedelta
+
+    from src.core.time import utc_now
+
     now = utc_now()
     window_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     window_end = now + timedelta(hours=6)
 
-    active_games = session.query(Game).filter(
-        Game.sport_id == sport.id,
-        Game.scheduled_utc >= window_start,
-        Game.scheduled_utc <= window_end,
-        Game.status.in_(["scheduled", "pre-game", "in_progress", "warmup"]),
-    ).all()
+    active_games = (
+        session.query(Game)
+        .filter(
+            Game.sport_id == sport.id,
+            Game.scheduled_utc >= window_start,
+            Game.scheduled_utc <= window_end,
+            Game.status.in_(["scheduled", "pre-game", "in_progress", "warmup"]),
+        )
+        .all()
+    )
 
     updated = 0
     for game in active_games:

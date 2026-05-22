@@ -1,4 +1,5 @@
 """Unit tests for feature math: Elo, rolling windows, prob bar, dedup."""
+
 from __future__ import annotations
 
 import math
@@ -8,14 +9,14 @@ import pytest
 from src.features.common import (
     elo_expected,
     elo_update,
-    rolling_mean,
     exponential_decay_weight,
     haversine_km,
+    rolling_mean,
 )
 from src.notify.discord import _prob_bar
 
-
 # ── Elo ───────────────────────────────────────────────────────────────────────
+
 
 class TestElo:
     def test_expected_equal_ratings(self):
@@ -46,6 +47,7 @@ class TestElo:
 
 # ── Rolling mean ──────────────────────────────────────────────────────────────
 
+
 class TestRollingMean:
     def test_simple(self):
         assert rolling_mean([1.0, 2.0, 3.0], window=3) == pytest.approx(2.0)
@@ -65,6 +67,7 @@ class TestRollingMean:
 
 # ── Exponential decay weights ─────────────────────────────────────────────────
 
+
 class TestDecayWeight:
     def test_zero_days_is_one(self):
         assert exponential_decay_weight(0, lam=0.3) == pytest.approx(1.0)
@@ -82,6 +85,7 @@ class TestDecayWeight:
 
 # ── Haversine ─────────────────────────────────────────────────────────────────
 
+
 class TestHaversine:
     def test_same_point_zero(self):
         assert haversine_km(40.7, -74.0, 40.7, -74.0) == pytest.approx(0.0, abs=1e-3)
@@ -98,6 +102,7 @@ class TestHaversine:
 
 
 # ── Discord prob bar ──────────────────────────────────────────────────────────
+
 
 class TestProbBar:
     def test_fifty_fifty(self):

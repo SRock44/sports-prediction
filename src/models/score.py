@@ -1,8 +1,9 @@
 """Batch scoring: load active model, run inference on upcoming games, write predictions."""
+
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -11,8 +12,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.core.logging import get_logger
-from src.core.time import utc_now, as_of_for_game
-from src.db.models import Game, Sport, ModelRecord, Prediction, PredictionAudit
+from src.core.time import as_of_for_game, utc_now
+from src.db.models import Game, ModelRecord, Prediction, PredictionAudit, Sport
 from src.ingest.common import dict_hash
 from src.models.registry import load_model
 
@@ -29,21 +30,27 @@ def score_upcoming_games(session: Session, sport_code: str, hours_ahead: int = 4
         log.error("score.sport_not_found", sport=sport_code)
         return 0
 
-    games = session.query(Game).filter(
-        Game.sport_id == sport.id,
-        Game.scheduled_utc >= now,
-        Game.scheduled_utc <= window_end,
-        Game.status.in_(["scheduled", "pre-game"]),
-    ).all()
+    games = (
+        session.query(Game)
+        .filter(
+            Game.sport_id == sport.id,
+            Game.scheduled_utc >= now,
+            Game.scheduled_utc <= window_end,
+            Game.status.in_(["scheduled", "pre-game"]),
+        )
+        .all()
+    )
 
     if not games:
         log.info("score.no_games", sport=sport_code)
         return 0
 
     # Load active winner model
-    winner_model_record = session.query(ModelRecord).filter_by(
-        sport_id=sport.id, kind="winner", target="home_won", active=True
-    ).first()
+    winner_model_record = (
+        session.query(ModelRecord)
+        .filter_by(sport_id=sport.id, kind="winner", target="home_won", active=True)
+        .first()
+    )
 
     count = 0
     for game in games:
@@ -69,8 +76,8 @@ def _score_game_winner(
         return 0
 
     # Build features
-    from src.features.nba.matchup import build_matchup_features as nba_matchup
     from src.features.mlb.matchup import build_matchup_features as mlb_matchup
+    from src.features.nba.matchup import build_matchup_features as nba_matchup
 
     build_fn = nba_matchup if sport.code == "nba" else mlb_matchup
     as_of = as_of_for_game(game.scheduled_utc)
@@ -87,21 +94,23 @@ def _score_game_winner(
         log.error("score.model_load_failed", run_id=model_record.mlflow_run_id, error=str(exc))
         return 0
 
-    feature_names_raw = json.loads(
-        load_model_feature_names(model_record.mlflow_run_id)
-    )
+    feature_names_raw = json.loads(load_model_feature_names(model_record.mlflow_run_id))
     X = np.array([[features.get(n, 0.0) for n in feature_names_raw]], dtype=np.float32)
     proba_home_win = float(model.predict_proba(X)[0, 1])
 
     features_hash = _hash_features(features)
 
     # Upsert prediction
-    existing = session.query(Prediction).filter_by(
-        game_id=game.id,
-        model_id=model_record.id,
-        target="home_won",
-        player_id=None,
-    ).first()
+    existing = (
+        session.query(Prediction)
+        .filter_by(
+            game_id=game.id,
+            model_id=model_record.id,
+            target="home_won",
+            player_id=None,
+        )
+        .first()
+    )
 
     now = utc_now()
     if existing is None:
@@ -129,12 +138,16 @@ def _score_game_winner(
         # Notify via PG LISTEN/NOTIFY — payload contract must match listener.py
         session.execute(
             text("SELECT pg_notify('predictions_channel', :payload)"),
-            {"payload": json.dumps({
-                "game_id": game.id,
-                "target": "home_won",
-                "probability": float(round(proba_home_win, 4)),
-                "is_lineup_update": False,
-            })},
+            {
+                "payload": json.dumps(
+                    {
+                        "game_id": game.id,
+                        "target": "home_won",
+                        "probability": float(round(proba_home_win, 4)),
+                        "is_lineup_update": False,
+                    }
+                )
+            },
         )
         return 1
     else:
@@ -148,7 +161,9 @@ def _score_game_winner(
 def load_model_feature_names(run_id: str) -> str:
     """Load feature_names.json from MLflow artifacts."""
     import mlflow
+
     from src.core.config import settings
+
     mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
     client = mlflow.MlflowClient()
     local_path = client.download_artifacts(run_id, "feature_names.json")
