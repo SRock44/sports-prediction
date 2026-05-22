@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs on the same branch when a new push arrives.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── 1. Lint ────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Check style
+        run: ruff check src/ tests/
+
+      - name: Check formatting
+        run: ruff format --check src/ tests/
+
+  # ── 2. Type check ─────────────────────────────────────────────────────────
+  type-check:
+    name: Type check (mypy)
+    runs-on: ubuntu-latest
+    # Informational only — mypy strict on this codebase is a progressive goal.
+    # Flip continue-on-error to false once the backlog is clear.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install deps
+        run: pip install -e ".[dev]"
+
+      - name: mypy
+        run: mypy src/
+
+  # ── 3. Unit tests (SQLite in-memory, no containers) ───────────────────────
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install deps
+        run: pip install -e ".[dev]"
+
+      - name: Run unit tests
+        run: pytest tests/unit/ --cov=src --cov-report=xml --cov-report=term-missing -q
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: coverage.xml
+          flags: unit
+          fail_ci_if_error: false
+
+  # ── 4. Integration tests (testcontainers — Docker-in-Docker) ─────────────
+  integration-tests:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install deps
+        run: pip install -e ".[dev]"
+
+      # testcontainers pulls Docker images at runtime — pre-pull the heavy ones
+      # so test startup is fast and pull failures are obvious.
+      - name: Pre-pull container images
+        run: |
+          docker pull timescale/timescaledb:latest-pg16
+          docker pull redis:7-alpine
+
+      - name: Run integration tests
+        run: pytest tests/integration/ -m integration --tb=short -q
+        env:
+          # testcontainers uses DOCKER_HOST from the runner environment automatically.
+          # Explicitly opt-in to Ryuk (container cleanup) in CI.
+          TESTCONTAINERS_RYUK_DISABLED: "false"
+
+  # ── 5. Security audit ─────────────────────────────────────────────────────
+  security:
+    name: Security audit (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install deps + auditor
+        run: pip install -e ".[dev]"
+
+      - name: Audit for known vulnerabilities
+        # --skip-editable: don't audit the local package itself (no PyPI record).
+        # Exit 0 on fix-unavailable vulns (informational), fail on exploitable ones.
+        run: pip-audit --skip-editable --desc on

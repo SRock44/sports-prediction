@@ -12,6 +12,7 @@ Key properties:
 """
 from __future__ import annotations
 
+import os
 import time
 import numpy as np
 import pandas as pd
@@ -44,7 +45,7 @@ except Exception:
     _GPU = False
 
 _XGB_DEVICE = "cuda" if _GPU else "cpu"
-_LGB_DEVICE = "gpu" if _GPU else "cpu"
+_LGB_DEVICE = "cpu"  # LightGBM GPU requires OpenCL, not CUDA; CPU is fast enough
 
 
 def _optuna_callback(model_tag: str, n_trials: int, start_time: float):
@@ -218,22 +219,39 @@ def train_winner_model(
             fold_losses.append(float(log_loss(y_val, proba, sample_weight=w_val)))
         return float(np.mean(fold_losses))
 
-    optuna.logging.set_verbosity(optuna.logging.WARNING)
-    pruner = optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=0)
-    xgb_study = optuna.create_study(direction="minimize", pruner=pruner)
-    print(f"[XGBoost] Starting Optuna search — {n_optuna_trials} trials, 5-fold walk-forward CV\n")
-    _xgb_t0 = time.time()
-    xgb_study.optimize(
-        xgb_objective,
-        n_trials=n_optuna_trials,
-        show_progress_bar=False,
-        callbacks=[_optuna_callback("XGB", n_optuna_trials, _xgb_t0)],
-    )
-    best_xgb_params = xgb_study.best_params
-    print(f"\n[XGBoost] Search done in {time.time()-_xgb_t0:.0f}s")
-    print(f"[XGBoost] Best trial: loss={xgb_study.best_value:.5f}  params={best_xgb_params}\n")
-    log.info("optuna.xgb_best", sport=sport, params=best_xgb_params, cv_loss=xgb_study.best_value,
-             device=_XGB_DEVICE)
+    # ── Load saved params or run Optuna search ───────────────────────────────
+    import json
+    _params_path = f"reports/{sport}_winner_xgb_params.json"
+    os.makedirs("reports", exist_ok=True)
+
+    if n_optuna_trials == 0 and os.path.exists(_params_path):
+        with open(_params_path) as _f:
+            best_xgb_params = json.load(_f)
+        print(f"[XGBoost] Skipping search — loaded saved params from {_params_path}")
+        print(f"[XGBoost] Params: {best_xgb_params}\n")
+        log.info("optuna.xgb_loaded", sport=sport, params=best_xgb_params)
+    else:
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+        pruner = optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=0)
+        xgb_study = optuna.create_study(direction="minimize", pruner=pruner)
+        _actual_trials = n_optuna_trials if n_optuna_trials > 0 else 50
+        print(f"[XGBoost] Starting Optuna search — {_actual_trials} trials, 5-fold walk-forward CV\n")
+        _xgb_t0 = time.time()
+        xgb_study.optimize(
+            xgb_objective,
+            n_trials=_actual_trials,
+            show_progress_bar=False,
+            callbacks=[_optuna_callback("XGB", _actual_trials, _xgb_t0)],
+        )
+        best_xgb_params = xgb_study.best_params
+        print(f"\n[XGBoost] Search done in {time.time()-_xgb_t0:.0f}s")
+        print(f"[XGBoost] Best trial: loss={xgb_study.best_value:.5f}  params={best_xgb_params}\n")
+        log.info("optuna.xgb_best", sport=sport, params=best_xgb_params,
+                 cv_loss=xgb_study.best_value, device=_XGB_DEVICE)
+        # Save for future fast-resume runs
+        with open(_params_path, "w") as _f:
+            json.dump(best_xgb_params, _f, indent=2)
+        print(f"[XGBoost] Saved best params to {_params_path}\n")
 
     # Refine n_estimators with early stopping against calib set
     _finder = xgb.XGBClassifier(
@@ -245,6 +263,7 @@ def train_winner_model(
         device=_XGB_DEVICE,
         early_stopping_rounds=50,
         random_state=42,
+        callbacks=[_XGBProgressCallback(every=200, tag="XGB early-stop")],
     )
     print(f"[XGBoost] Early-stopping fit (max 5000 trees, stop after 50 no-improve) ...")
     _es_t0 = time.time()
@@ -254,7 +273,6 @@ def train_winner_model(
         eval_set=[(X_calib, y_calib)],
         sample_weight_eval_set=[w_calib],
         verbose=False,
-        callbacks=[_XGBProgressCallback(every=200, tag="XGB early-stop")],
     )
     best_n_trees = _finder.best_iteration or best_xgb_params["n_estimators"]
     print(f"[XGBoost] Early stop: best_n_trees={best_n_trees}  ({time.time()-_es_t0:.0f}s)\n")
@@ -308,19 +326,33 @@ def train_winner_model(
                 fold_losses.append(float(log_loss(y_val, proba, sample_weight=w_val)))
             return float(np.mean(fold_losses))
 
-        lgb_study = optuna.create_study(direction="minimize", pruner=pruner)
-        print(f"[LightGBM] Starting Optuna search — {n_optuna_trials} trials, 5-fold walk-forward CV\n")
-        _lgb_t0 = time.time()
-        lgb_study.optimize(
-            lgb_objective,
-            n_trials=n_optuna_trials,
-            show_progress_bar=False,
-            callbacks=[_optuna_callback("LGB", n_optuna_trials, _lgb_t0)],
-        )
-        best_lgb_params = lgb_study.best_params
-        print(f"\n[LightGBM] Search done in {time.time()-_lgb_t0:.0f}s")
-        print(f"[LightGBM] Best trial: loss={lgb_study.best_value:.5f}  params={best_lgb_params}\n")
-        log.info("optuna.lgb_best", sport=sport, params=best_lgb_params, cv_loss=lgb_study.best_value)
+        _lgb_params_path = f"reports/{sport}_winner_lgb_params.json"
+        _lgb_actual_trials = n_optuna_trials if n_optuna_trials > 0 else 0
+
+        if _lgb_actual_trials == 0 and os.path.exists(_lgb_params_path):
+            with open(_lgb_params_path) as _f:
+                best_lgb_params = json.load(_f)
+            print(f"[LightGBM] Skipping search — loaded saved params from {_lgb_params_path}")
+            log.info("optuna.lgb_loaded", sport=sport, params=best_lgb_params)
+        else:
+            _lgb_actual_trials = _lgb_actual_trials or 200
+            _lgb_pruner = optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=0)
+            lgb_study = optuna.create_study(direction="minimize", pruner=_lgb_pruner)
+            print(f"[LightGBM] Starting Optuna search — {_lgb_actual_trials} trials, 5-fold walk-forward CV\n")
+            _lgb_t0 = time.time()
+            lgb_study.optimize(
+                lgb_objective,
+                n_trials=_lgb_actual_trials,
+                show_progress_bar=False,
+                callbacks=[_optuna_callback("LGB", _lgb_actual_trials, _lgb_t0)],
+            )
+            best_lgb_params = lgb_study.best_params
+            print(f"\n[LightGBM] Search done in {time.time()-_lgb_t0:.0f}s")
+            print(f"[LightGBM] Best trial: loss={lgb_study.best_value:.5f}  params={best_lgb_params}\n")
+            log.info("optuna.lgb_best", sport=sport, params=best_lgb_params, cv_loss=lgb_study.best_value)
+            with open(_lgb_params_path, "w") as _f:
+                json.dump(best_lgb_params, _f, indent=2)
+            print(f"[LightGBM] Saved best params to {_lgb_params_path}\n")
 
         lgb_clf = lgb.LGBMClassifier(
             **{k: v for k, v in best_lgb_params.items() if k != "n_estimators"},
