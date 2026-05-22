@@ -9,7 +9,6 @@ requires-python = ">=3.11"
 dependencies = [
     # Web
     "fastapi>=0.115.0",
-    "starlette>=1.0.1",
     "uvicorn[standard]>=0.32.0",
     "gunicorn>=23.0.0",
     "pydantic>=2.10.0",

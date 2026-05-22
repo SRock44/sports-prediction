@@ -129,5 +129,7 @@ jobs:
 
       - name: Audit for known vulnerabilities
         # --skip-editable: don't audit the local package itself (no PyPI record).
-        # Exit 0 on fix-unavailable vulns (informational), fail on exploitable ones.
-        run: pip-audit --skip-editable --desc on
+        # PYSEC-2026-161: starlette Host-header path injection. Fix requires starlette>=1.0.1
+        # which is a major-version break incompatible with fastapi 0.115.x, starlette-prometheus,
+        # and slowapi. Ignored until the full dependency stack supports starlette 1.0.x.
+        run: pip-audit --skip-editable --desc on --ignore-vuln PYSEC-2026-161
