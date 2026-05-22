@@ -70,7 +70,13 @@ def build_matchup_features(
     matchup["elo_diff"] = home_elo - away_elo
     matchup["elo_home_win_prob"] = 1.0 / (1.0 + 10.0 ** (-(home_elo + 50.0 - away_elo) / 400.0))
     matchup["run_diff_diff_last10"] = home_feats["run_diff_last10"] - away_feats["run_diff_last10"]
+    matchup["run_diff_diff_last5"] = home_feats["run_diff_last5"] - away_feats["run_diff_last5"]
+    matchup["woba_diff_last10"] = home_feats["woba_last10"] - away_feats["woba_last10"]
     matchup["rest_diff"] = home_feats["rest_days"] - away_feats["rest_days"]
+    matchup["win_pct_diff_last10"] = home_feats["win_pct_last10"] - away_feats["win_pct_last10"]
+    matchup["win_pct_season_diff"] = home_feats["win_pct_season"] - away_feats["win_pct_season"]
+    matchup["streak_diff"] = home_feats["streak"] - away_feats["streak"]
+    matchup["bullpen_rest_diff"] = away_feats["bullpen_ip_last3d"] - home_feats["bullpen_ip_last3d"]
 
     # ── Starting pitcher features ─────────────────────────────────────────────
     home_sp = _get_confirmed_starter(session, game_id, home_team_id, as_of)
@@ -78,6 +84,14 @@ def build_matchup_features(
     matchup.update(_pitcher_features(home_sp, prefix="home_sp"))
     matchup.update(_pitcher_features(away_sp, prefix="away_sp"))
     matchup["sp_xfip_diff"] = matchup.get("home_sp_xfip", 4.0) - matchup.get("away_sp_xfip", 4.0)
+
+    # SP rolling form: last 3 starts ERA, K%, BB%
+    home_sp_id = home_sp.get("playerId") or home_sp.get("player_id") if home_sp else None
+    away_sp_id = away_sp.get("playerId") or away_sp.get("player_id") if away_sp else None
+    matchup.update(_sp_rolling_form(session, home_sp_id, as_of, prefix="home_sp"))
+    matchup.update(_sp_rolling_form(session, away_sp_id, as_of, prefix="away_sp"))
+    matchup["sp_form_era_diff"] = matchup.get("home_sp_form_era", 4.50) - matchup.get("away_sp_form_era", 4.50)
+    matchup["sp_form_k_pct_diff"] = matchup.get("home_sp_form_k_pct", 0.22) - matchup.get("away_sp_form_k_pct", 0.22)
 
     # ── Head-to-head ──────────────────────────────────────────────────────────
     h2h = _get_h2h(session, home_team_id, away_team_id, as_of, 5)
@@ -120,6 +134,67 @@ def _pitcher_features(pitcher: dict[str, Any] | None, prefix: str) -> dict[str, 
         f"{prefix}_handedness": int(pitcher.get("throws", "R") == "L"),
         f"{prefix}_known": 1,
     }
+
+
+def _sp_rolling_form(
+    session: Session,
+    player_id: int | str | None,
+    as_of: datetime,
+    prefix: str,
+    n_starts: int = 4,
+) -> dict[str, Any]:
+    """Last N starts ERA, K%, BB% for a starting pitcher."""
+    defaults = {
+        f"{prefix}_form_era": 4.50,
+        f"{prefix}_form_k_pct": 0.22,
+        f"{prefix}_form_bb_pct": 0.08,
+        f"{prefix}_form_known": 0,
+    }
+    if player_id is None:
+        return defaults
+    try:
+        result = session.execute(
+            text("""
+                SELECT pgs.stats->'pitching' AS pit
+                FROM player_game_stats pgs
+                JOIN games g ON g.id = pgs.game_id
+                WHERE pgs.player_id = :pid
+                  AND g.scheduled_utc < :as_of
+                  AND g.status = 'final'
+                  AND pgs.stats->'pitching' IS NOT NULL
+                ORDER BY g.scheduled_utc DESC
+                LIMIT :n
+            """),
+            {"pid": player_id, "as_of": as_of, "n": n_starts},
+        )
+        rows = [r.pit for r in result if r.pit]
+        if not rows:
+            return defaults
+
+        eras, k_pcts, bb_pcts = [], [], []
+        for pit in rows:
+            er = pit.get("earnedRuns") or pit.get("earnedRunsAllowed")
+            ip = pit.get("inningsPitched")
+            k = pit.get("strikeOuts")
+            bb = pit.get("baseOnBalls") or pit.get("walks")
+            bf = pit.get("battersFaced") or pit.get("pitchesThrown")
+
+            if er is not None and ip and float(ip) > 0:
+                eras.append(float(er) * 9.0 / float(ip))
+            if k is not None and bf and float(bf) > 0:
+                k_pcts.append(float(k) / float(bf))
+            if bb is not None and bf and float(bf) > 0:
+                bb_pcts.append(float(bb) / float(bf))
+
+        from src.features.common import rolling_mean
+        return {
+            f"{prefix}_form_era": rolling_mean(eras, n_starts) or 4.50,
+            f"{prefix}_form_k_pct": rolling_mean(k_pcts, n_starts) or 0.22,
+            f"{prefix}_form_bb_pct": rolling_mean(bb_pcts, n_starts) or 0.08,
+            f"{prefix}_form_known": int(bool(eras)),
+        }
+    except Exception:
+        return defaults
 
 
 def _get_h2h(

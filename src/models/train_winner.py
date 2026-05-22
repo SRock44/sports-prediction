@@ -12,6 +12,7 @@ Key properties:
 """
 from __future__ import annotations
 
+import time
 import numpy as np
 import pandas as pd
 import optuna
@@ -34,6 +35,16 @@ try:
     _HAS_LGB = True
 except ImportError:
     _HAS_LGB = False
+
+# Use GPU if available
+try:
+    import subprocess
+    _GPU = subprocess.run(["nvidia-smi"], capture_output=True).returncode == 0
+except Exception:
+    _GPU = False
+
+_XGB_DEVICE = "cuda" if _GPU else "cpu"
+_LGB_DEVICE = "gpu" if _GPU else "cpu"
 
 
 class IsotonicCalibratedEnsemble:
@@ -97,7 +108,7 @@ def train_winner_model(
     training_df: pd.DataFrame,
     feature_names: list[str],
     holdout_df: pd.DataFrame,
-    n_optuna_trials: int = 200,
+    n_optuna_trials: int = 500,
     run_name: str | None = None,
 ) -> tuple[str, dict[str, float]]:
     """Train calibrated ensemble model. Returns (mlflow_run_id, metrics_dict)."""
@@ -134,7 +145,7 @@ def train_winner_model(
     # ── XGBoost Optuna search ─────────────────────────────────────────────────
     def xgb_objective(trial: optuna.Trial) -> float:
         params = {
-            "n_estimators": trial.suggest_int("n_estimators", 100, 800),
+            "n_estimators": trial.suggest_int("n_estimators", 200, 3000),
             "max_depth": trial.suggest_int("max_depth", 3, 8),
             "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.15, log=True),
             "subsample": trial.suggest_float("subsample", 0.5, 1.0),
@@ -152,6 +163,7 @@ def train_winner_model(
                 objective="binary:logistic",
                 eval_metric="logloss",
                 tree_method="hist",
+                device=_XGB_DEVICE,
                 random_state=42,
             )
             clf.fit(X_tr, y_tr, sample_weight=w_tr, verbose=False)
@@ -164,15 +176,17 @@ def train_winner_model(
     xgb_study = optuna.create_study(direction="minimize", pruner=pruner)
     xgb_study.optimize(xgb_objective, n_trials=n_optuna_trials, show_progress_bar=True)
     best_xgb_params = xgb_study.best_params
-    log.info("optuna.xgb_best", sport=sport, params=best_xgb_params, cv_loss=xgb_study.best_value)
+    log.info("optuna.xgb_best", sport=sport, params=best_xgb_params, cv_loss=xgb_study.best_value,
+             device=_XGB_DEVICE)
 
     # Refine n_estimators with early stopping against calib set
     _finder = xgb.XGBClassifier(
         **{k: v for k, v in best_xgb_params.items() if k != "n_estimators"},
-        n_estimators=2000,
+        n_estimators=5000,
         objective="binary:logistic",
         eval_metric="logloss",
         tree_method="hist",
+        device=_XGB_DEVICE,
         early_stopping_rounds=50,
         random_state=42,
     )
@@ -193,6 +207,7 @@ def train_winner_model(
         objective="binary:logistic",
         eval_metric="logloss",
         tree_method="hist",
+        device=_XGB_DEVICE,
         random_state=42,
     )
     best_xgb.fit(X_train, y_train, sample_weight=w_train, verbose=False)
@@ -206,7 +221,7 @@ def train_winner_model(
             params = {
                 "num_leaves": trial.suggest_int("num_leaves", 20, 200),
                 "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.15, log=True),
-                "n_estimators": trial.suggest_int("n_estimators", 100, 800),
+                "n_estimators": trial.suggest_int("n_estimators", 200, 3000),
                 "subsample": trial.suggest_float("subsample", 0.5, 1.0),
                 "colsample_bytree": trial.suggest_float("colsample_bytree", 0.4, 1.0),
                 "min_child_samples": trial.suggest_int("min_child_samples", 5, 60),
@@ -218,6 +233,7 @@ def train_winner_model(
                 clf = lgb.LGBMClassifier(
                     **params,
                     objective="binary",
+                    device=_LGB_DEVICE,
                     random_state=42,
                     verbose=-1,
                 )
@@ -236,8 +252,9 @@ def train_winner_model(
 
         lgb_clf = lgb.LGBMClassifier(
             **{k: v for k, v in best_lgb_params.items() if k != "n_estimators"},
-            n_estimators=2000,
+            n_estimators=5000,
             objective="binary",
+            device=_LGB_DEVICE,
             random_state=42,
             verbose=-1,
         )

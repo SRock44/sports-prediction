@@ -20,6 +20,13 @@ x-app-base: &app-base
     - mlruns:/app/mlruns
     - reports:/app/reports
     - pybaseball_cache:/tmp/pybaseball_cache
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
   <<: *common-env
 
 services:
