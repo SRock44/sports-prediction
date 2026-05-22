@@ -1,12 +1,13 @@
-"""Odds aggregator — polls DraftKings, FanDuel, and Kalshi directly.
+"""Odds aggregator — polls DraftKings, FanDuel, Fanatics, and Kalshi directly.
 
 No third-party aggregator (e.g. The Odds API). We hit the books directly:
   - DraftKings  — moneyline + spread (unofficial web API, no key needed)
   - FanDuel     — moneyline + spread (unofficial web API, no key needed)
+  - Fanatics    — moneyline + spread (unofficial web API, no key needed)
   - Kalshi      — implied probability from YES/NO prediction market (documented public API)
 
-Consensus logic: average the two moneyline implied probs (DK + FD). Kalshi
-probability is stored separately as it's already a probability, not odds.
+Consensus logic: average available moneyline implied probs across all books.
+Kalshi probability is stored separately — it's already a calibrated probability.
 """
 from __future__ import annotations
 
@@ -25,34 +26,36 @@ def american_to_implied_prob(price: float) -> float:
 
 
 def get_consensus_lines(sport_code: str) -> list[dict[str, Any]]:
-    """Fetch and merge lines from DraftKings + FanDuel. Returns list of game dicts.
+    """Fetch and merge lines from DraftKings, FanDuel, and Fanatics.
 
-    Each game dict has:
+    Each returned game dict has:
       home_team, away_team, commence_time,
       dk_home_ml, dk_away_ml, dk_home_spread,
       fd_home_ml, fd_away_ml, fd_home_spread,
+      fan_home_ml, fan_away_ml, fan_home_spread,
       consensus_home_implied_prob, consensus_away_implied_prob,
       consensus_home_spread
     """
-    dk_lines: list[dict[str, Any]] = []
-    fd_lines: list[dict[str, Any]] = []
+    book_lines: dict[str, list[dict[str, Any]]] = {}
 
-    try:
-        from src.ingest.odds.draftkings import get_game_lines as dk_get
-        dk_lines = dk_get(sport_code)
-        log.info("odds.dk_fetched", sport=sport_code, n=len(dk_lines))
-    except Exception as exc:
-        log.warning("odds.dk_failed", sport=sport_code, error=str(exc))
+    _BOOKS = {
+        "dk":  ("src.ingest.odds.draftkings", "get_game_lines"),
+        "fd":  ("src.ingest.odds.fanduel",    "get_game_lines"),
+        "fan": ("src.ingest.odds.fanatics",   "get_game_lines"),
+    }
 
-    try:
-        from src.ingest.odds.fanduel import get_game_lines as fd_get
-        fd_lines = fd_get(sport_code)
-        log.info("odds.fd_fetched", sport=sport_code, n=len(fd_lines))
-    except Exception as exc:
-        log.warning("odds.fd_failed", sport=sport_code, error=str(exc))
+    for key, (module_path, fn_name) in _BOOKS.items():
+        try:
+            import importlib
+            mod = importlib.import_module(module_path)
+            lines = getattr(mod, fn_name)(sport_code)
+            book_lines[key] = lines
+            log.info(f"odds.{key}_fetched", sport=sport_code, n=len(lines))
+        except Exception as exc:
+            log.warning(f"odds.{key}_failed", sport=sport_code, error=str(exc))
+            book_lines[key] = []
 
-    # Merge by fuzzy team-name matching
-    merged = _merge_lines(dk_lines, fd_lines)
+    merged = _merge_all_books(book_lines)
     log.info("odds.merged", sport=sport_code, n=len(merged))
     return merged
 
@@ -67,67 +70,61 @@ def get_kalshi_probs(sport_code: str) -> list[dict[str, Any]]:
         return []
 
 
-def _merge_lines(
-    dk: list[dict[str, Any]],
-    fd: list[dict[str, Any]],
+_BOOK_KEYS = ["dk", "fd", "fan"]
+
+
+def _merge_all_books(
+    book_lines: dict[str, list[dict[str, Any]]],
 ) -> list[dict[str, Any]]:
-    """Pair DK and FD lines for the same game, compute consensus implied prob."""
-    out: list[dict[str, Any]] = []
+    """Merge lines from all books into one game list, indexed by home team.
 
-    # Index FD by normalized home team name
-    fd_index: dict[str, dict[str, Any]] = {
-        _norm(g["home_team"]): g for g in fd if g.get("home_team")
-    }
+    For each game:
+      - Stores per-book fields: {key}_home_ml, {key}_away_ml, {key}_home_spread
+      - Computes consensus implied prob as average across all books with data
+    """
+    # Build a master index: normalized_home_team → merged game dict
+    games: dict[str, dict[str, Any]] = {}
 
-    for dk_game in dk:
-        home = _norm(dk_game.get("home_team", ""))
-        fd_game = fd_index.get(home)
+    # Use DK as the primary source to establish the game list, fall back to FD, then Fanatics
+    primary_order = [k for k in _BOOK_KEYS if book_lines.get(k)]
 
-        game: dict[str, Any] = {
-            "home_team": dk_game.get("home_team", ""),
-            "away_team": dk_game.get("away_team", ""),
-            "commence_time": dk_game.get("commence_time", ""),
-            "dk_home_ml": dk_game.get("home_ml"),
-            "dk_away_ml": dk_game.get("away_ml"),
-            "dk_home_spread": dk_game.get("home_spread"),
-            "fd_home_ml": fd_game.get("home_ml") if fd_game else None,
-            "fd_away_ml": fd_game.get("away_ml") if fd_game else None,
-            "fd_home_spread": fd_game.get("home_spread") if fd_game else None,
-        }
+    for key in primary_order:
+        for game_data in book_lines[key]:
+            home_key = _norm(game_data.get("home_team", ""))
+            if not home_key:
+                continue
+            if home_key not in games:
+                games[home_key] = {
+                    "home_team": game_data.get("home_team", ""),
+                    "away_team": game_data.get("away_team", ""),
+                    "commence_time": game_data.get("commence_time", ""),
+                    **{f"{k}_home_ml": None for k in _BOOK_KEYS},
+                    **{f"{k}_away_ml": None for k in _BOOK_KEYS},
+                    **{f"{k}_home_spread": None for k in _BOOK_KEYS},
+                }
+            # Populate this book's fields
+            games[home_key][f"{key}_home_ml"] = game_data.get("home_ml")
+            games[home_key][f"{key}_away_ml"] = game_data.get("away_ml")
+            games[home_key][f"{key}_home_spread"] = game_data.get("home_spread")
 
-        # Consensus implied prob (average available books)
-        probs = []
-        for ml_key in ("dk_home_ml", "fd_home_ml"):
-            ml = game.get(ml_key)
-            if ml is not None:
-                probs.append(american_to_implied_prob(ml))
+    # Compute consensus stats for each game
+    out = []
+    for game in games.values():
+        ml_probs = [
+            american_to_implied_prob(game[f"{k}_home_ml"])
+            for k in _BOOK_KEYS
+            if game.get(f"{k}_home_ml") is not None
+        ]
+        spreads = [
+            game[f"{k}_home_spread"]
+            for k in _BOOK_KEYS
+            if game.get(f"{k}_home_spread") is not None
+        ]
 
-        game["consensus_home_implied_prob"] = sum(probs) / len(probs) if probs else 0.5
+        game["consensus_home_implied_prob"] = sum(ml_probs) / len(ml_probs) if ml_probs else 0.5
         game["consensus_away_implied_prob"] = 1.0 - game["consensus_home_implied_prob"]
-
-        spreads = [g for g in (game["dk_home_spread"], game["fd_home_spread"]) if g is not None]
         game["consensus_home_spread"] = sum(spreads) / len(spreads) if spreads else 0.0
-
         out.append(game)
-
-    # Add any FD-only games not matched to DK
-    matched_homes = {_norm(g["home_team"]) for g in out}
-    for fd_game in fd:
-        if _norm(fd_game.get("home_team", "")) not in matched_homes:
-            game = {
-                "home_team": fd_game.get("home_team", ""),
-                "away_team": fd_game.get("away_team", ""),
-                "commence_time": fd_game.get("commence_time", ""),
-                "dk_home_ml": None, "dk_away_ml": None, "dk_home_spread": None,
-                "fd_home_ml": fd_game.get("home_ml"),
-                "fd_away_ml": fd_game.get("away_ml"),
-                "fd_home_spread": fd_game.get("home_spread"),
-            }
-            ml = game["fd_home_ml"]
-            game["consensus_home_implied_prob"] = american_to_implied_prob(ml) if ml else 0.5
-            game["consensus_away_implied_prob"] = 1.0 - game["consensus_home_implied_prob"]
-            game["consensus_home_spread"] = game["fd_home_spread"] or 0.0
-            out.append(game)
 
     return out
 

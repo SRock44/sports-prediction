@@ -47,28 +47,24 @@ def ingest_odds(
         if game is None:
             continue
 
-        # Store DraftKings line
-        if game_data.get("dk_home_ml") is not None:
-            _upsert(session, game.id, "draftkings", "h2h", snapshot,
-                    game_data["dk_home_ml"], game_data.get("dk_away_ml"), None, now)
-            result.rows_inserted += 1
-        if game_data.get("dk_home_spread") is not None:
-            _upsert(session, game.id, "draftkings", "spreads", snapshot,
-                    None, None, game_data["dk_home_spread"], now)
-            result.rows_inserted += 1
+        # Store per-book lines
+        _BOOK_MAP = [
+            ("dk",  "draftkings"),
+            ("fd",  "fanduel"),
+            ("fan", "fanatics"),
+        ]
+        for key, bookmaker in _BOOK_MAP:
+            if game_data.get(f"{key}_home_ml") is not None:
+                _upsert(session, game.id, bookmaker, "h2h", snapshot,
+                        game_data[f"{key}_home_ml"], game_data.get(f"{key}_away_ml"), None, now)
+                result.rows_inserted += 1
+            if game_data.get(f"{key}_home_spread") is not None:
+                _upsert(session, game.id, bookmaker, "spreads", snapshot,
+                        None, None, game_data[f"{key}_home_spread"], now)
+                result.rows_inserted += 1
 
-        # Store FanDuel line
-        if game_data.get("fd_home_ml") is not None:
-            _upsert(session, game.id, "fanduel", "h2h", snapshot,
-                    game_data["fd_home_ml"], game_data.get("fd_away_ml"), None, now)
-            result.rows_inserted += 1
-        if game_data.get("fd_home_spread") is not None:
-            _upsert(session, game.id, "fanduel", "spreads", snapshot,
-                    None, None, game_data["fd_home_spread"], now)
-            result.rows_inserted += 1
-
-        # Store consensus h2h (average of available books)
-        if game_data.get("consensus_home_implied_prob") != 0.5:
+        # Store consensus h2h (average of all available books)
+        if game_data.get("consensus_home_implied_prob", 0.5) != 0.5:
             _upsert(session, game.id, "consensus", "h2h", snapshot,
                     _prob_to_american(game_data["consensus_home_implied_prob"]),
                     _prob_to_american(game_data["consensus_away_implied_prob"]),
