@@ -20,7 +20,7 @@ router = APIRouter(tags=["games"])
 async def upcoming_games(
     sport: str = Query(..., pattern="^(nba|mlb)$"),
     hours: int = Query(default=48, ge=1, le=168),
-    payload: dict = Depends(require_scope("predictions:read")),
+    payload: dict[str, Any] = Depends(require_scope("predictions:read")),
     session: AsyncSession = Depends(get_async_session),
 ) -> list[dict[str, Any]]:
     now = utc_now()
@@ -31,7 +31,7 @@ async def upcoming_games(
 @router.get("/games/{game_id}")
 async def game_detail(
     game_id: int,
-    payload: dict = Depends(require_scope("predictions:read")),
+    payload: dict[str, Any] = Depends(require_scope("predictions:read")),
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     game = await get_game_by_id(session, game_id)

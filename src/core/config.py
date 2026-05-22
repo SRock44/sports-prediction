@@ -121,7 +121,7 @@ class Settings(BaseSettings):
     def split_csv(cls, v: Any) -> list[str]:
         if isinstance(v, str):
             return [item.strip() for item in v.split(",") if item.strip()]
-        return v  # type: ignore[return-value]
+        return v  # type: ignore[no-any-return]
 
 
 @lru_cache(maxsize=1)

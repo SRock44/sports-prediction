@@ -18,7 +18,7 @@ router = APIRouter(tags=["models"])
 
 @router.get("/sports")
 async def list_sports(
-    payload: dict = Depends(require_scope("predictions:read")),
+    payload: dict[str, Any] = Depends(require_scope("predictions:read")),
     session: AsyncSession = Depends(get_async_session),
 ) -> list[dict[str, Any]]:
     result = await session.execute(select(Sport))
@@ -29,7 +29,7 @@ async def list_sports(
 @router.get("/models/active")
 async def active_models(
     sport: str | None = Query(default=None, pattern="^(nba|mlb)$"),
-    payload: dict = Depends(require_scope("models:read")),
+    payload: dict[str, Any] = Depends(require_scope("models:read")),
     session: AsyncSession = Depends(get_async_session),
 ) -> list[dict[str, Any]]:
     """Return active model records, optionally filtered by sport."""

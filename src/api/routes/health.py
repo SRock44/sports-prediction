@@ -34,7 +34,7 @@ async def health() -> dict[str, Any]:
 
         r = await aioredis.from_url(settings.redis_url)
         await r.ping()
-        await r.aclose()
+        await r.aclose()  # type: ignore[attr-defined]
         checks["checks"]["redis"] = "ok"
     except Exception as exc:
         checks["checks"]["redis"] = f"ERROR: {exc}"

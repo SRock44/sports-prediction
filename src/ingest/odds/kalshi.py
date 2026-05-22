@@ -54,7 +54,7 @@ def get_game_markets(sport_code: str, limit: int = 100) -> list[dict[str, Any]]:
 
     resp = requests.get(
         f"{_BASE}/markets",
-        params={
+        params={  # type: ignore[arg-type]
             "series_ticker": series,
             "status": "open",
             "limit": limit,
@@ -85,7 +85,7 @@ def get_market_by_ticker(ticker: str) -> dict[str, Any] | None:
     if resp.status_code == 404:
         return None
     resp.raise_for_status()
-    return resp.json().get("market")
+    return resp.json().get("market")  # type: ignore[no-any-return]
 
 
 def _parse_markets(markets: list[dict[str, Any]]) -> list[dict[str, Any]]:

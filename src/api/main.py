@@ -60,7 +60,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Content-Security-Policy"] = "default-src 'none'"
         response.headers.pop("Server", None)
-        return response
+        return response  # type: ignore[no-any-return]
 
 
 class AuditLogMiddleware(BaseHTTPMiddleware):
@@ -84,7 +84,7 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
                     ip=request.client.host if request.client else None,
                 )
             )
-        return response
+        return response  # type: ignore[no-any-return]
 
 
 async def _write_audit(

@@ -38,7 +38,7 @@ def _sleep() -> None:
 def get_schedule(start_date: str, end_date: str, sport_id: int = 1) -> list[dict[str, Any]]:
     """Fetch scheduled + completed games between two dates (YYYY-MM-DD)."""
     _sleep()
-    return statsapi.schedule(  # type: ignore[return-value]
+    return statsapi.schedule(  # type: ignore[no-any-return]
         start_date=start_date,
         end_date=end_date,
         sportId=sport_id,
@@ -53,7 +53,7 @@ def get_schedule(start_date: str, end_date: str, sport_id: int = 1) -> list[dict
 )
 def get_boxscore(game_pk: int) -> dict[str, Any]:
     _sleep()
-    return statsapi.boxscore_data(game_pk)  # type: ignore[return-value]
+    return statsapi.boxscore_data(game_pk)  # type: ignore[no-any-return]
 
 
 @retry(
@@ -65,7 +65,7 @@ def get_boxscore(game_pk: int) -> dict[str, Any]:
 def get_live_feed(game_pk: int) -> dict[str, Any]:
     """GUMBO live feed — current game state including play-by-play."""
     _sleep()
-    return statsapi.get("game", {"gamePk": game_pk})  # type: ignore[return-value]
+    return statsapi.get("game", {"gamePk": game_pk})  # type: ignore[no-any-return]
 
 
 @retry(
@@ -80,7 +80,7 @@ def get_roster(team_id: int, season: int) -> list[dict[str, Any]]:
         "team_roster",
         {"teamId": team_id, "season": season, "rosterType": "active"},
     )
-    return data.get("roster", [])  # type: ignore[return-value]
+    return data.get("roster", [])  # type: ignore[no-any-return]
 
 
 @retry(
@@ -96,12 +96,12 @@ def get_transactions(start_date: str, end_date: str) -> list[dict[str, Any]]:
         "transactions",
         {"startDate": start_date, "endDate": end_date, "sportId": 1},
     )
-    return data.get("transactions", [])  # type: ignore[return-value]
+    return data.get("transactions", [])  # type: ignore[no-any-return]
 
 
 def get_all_teams(season: int) -> list[dict[str, Any]]:
     data = statsapi.get("teams", {"season": season, "sportId": 1})
-    return data.get("teams", [])  # type: ignore[return-value]
+    return data.get("teams", [])  # type: ignore[no-any-return]
 
 
 # ── Statcast (pybaseball) ─────────────────────────────────────────────────────

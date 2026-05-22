@@ -85,7 +85,7 @@ def _parse_events(data: Any) -> list[dict[str, Any]]:
             "home_spread": None,
         }
 
-        markets = event.get("markets", event.get("betOffers", []))
+        markets = event.get("markets", event.get("betOffers", [])) or []
         for market in markets:
             market_type = (
                 market.get("type", "")

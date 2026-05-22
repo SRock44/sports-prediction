@@ -7,6 +7,7 @@ is used. This is the central anti-leakage guarantee.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
@@ -28,7 +29,7 @@ _HOME_ADVANTAGE = 100.0  # added to home team's Elo before expected-score calc
 
 def elo_expected(rating_a: float, rating_b: float) -> float:
     """P(A beats B) given Elo ratings."""
-    return 1.0 / (1.0 + 10.0 ** ((rating_b - rating_a) / 400.0))
+    return 1.0 / (1.0 + 10.0 ** ((rating_b - rating_a) / 400.0))  # type: ignore[no-any-return]
 
 
 def elo_update(
@@ -79,7 +80,7 @@ def compute_elo_series(
 
 
 def rolling_mean(
-    values: list[float],
+    values: Sequence[float],
     window: int,
     min_periods: int = 1,
 ) -> float | None:

@@ -143,7 +143,7 @@ def _fetch_weather(lat: float, lon: float, game_utc: datetime) -> dict[str, Any]
     date_str = game_utc.strftime("%Y-%m-%d")
     resp = requests.get(
         _OPEN_METEO_URL,
-        params={
+        params={  # type: ignore[arg-type]
             "latitude": lat,
             "longitude": lon,
             "hourly": "temperature_2m,windspeed_10m,winddirection_10m,precipitation_probability,weathercode",

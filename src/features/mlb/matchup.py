@@ -166,7 +166,7 @@ def _get_confirmed_starter(
     if row and row.players:
         for p in row.players:
             if p.get("position") in ("SP", "P") and p.get("batting_order") == 0:
-                return p
+                return p  # type: ignore[no-any-return]
     return None
 
 

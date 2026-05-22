@@ -148,7 +148,7 @@ class Upserter:
                 if col.name not in self._conflict_columns and col.name != "id"
             }
 
-            stmt = stmt.on_conflict_do_update(
+            stmt = stmt.on_conflict_do_update(  # type: ignore[assignment]
                 index_elements=self._conflict_columns,
                 set_=update_cols,
                 # xmax = 0 means the row was freshly inserted; non-zero means it was updated.

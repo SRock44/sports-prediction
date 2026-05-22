@@ -117,7 +117,7 @@ def _parse_offer(offer: dict[str, Any]) -> dict[str, Any] | None:
 
     home_outcome = next((o for o in outcomes if o.get("label") == "Home"), None)
     away_outcome = next((o for o in outcomes if o.get("label") == "Away"), None)
-    if home_outcome is None:
+    if home_outcome is None or away_outcome is None:
         home_outcome = outcomes[0]
         away_outcome = outcomes[1]
 

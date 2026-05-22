@@ -72,7 +72,7 @@ def log_model_run(
             target=target,
             metrics=metrics,
         )
-        return run.info.run_id
+        return run.info.run_id  # type: ignore[no-any-return]
 
 
 def load_model(run_id: str, framework: str = "sklearn") -> Any:
@@ -102,7 +102,7 @@ def promote_model(
     version: str,
     metrics: dict[str, float],
     feature_spec_hash: str,
-) -> ModelRecord:  # type: ignore[name-defined]
+) -> ModelRecord:
     """Deactivate old active model for this (sport, kind, target), activate new one."""
     from src.core.time import utc_now
     from src.db.models import ModelRecord

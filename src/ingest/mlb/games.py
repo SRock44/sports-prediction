@@ -155,7 +155,7 @@ def _upsert_game(session: Session, sport: Sport, g: dict[str, Any], season: int)
     )
 
     stmt = (
-        pg_insert(Game.__table__)
+        pg_insert(Game.__table__)  # type: ignore[arg-type]
         .values(
             sport_id=sport.id,
             external_id=game_id,

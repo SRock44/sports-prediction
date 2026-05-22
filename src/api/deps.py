@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 import redis.asyncio as aioredis
 from fastapi import Depends, HTTPException, Request, status
@@ -33,7 +33,7 @@ bearer_scheme = HTTPBearer()
 async def get_current_payload(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer_scheme)],
     request: Request,
-) -> dict:
+) -> dict[str, Any]:
     try:
         payload = decode_access_token(credentials.credentials)
     except JWTError as exc:
@@ -58,10 +58,10 @@ async def get_current_payload(
     return payload
 
 
-def require_scope(scope: str):
+def require_scope(scope: str) -> Any:
     """Dependency factory: raises 403 if the JWT lacks the required scope."""
 
-    async def _check(payload: dict = Depends(get_current_payload)) -> dict:
+    async def _check(payload: dict[str, Any] = Depends(get_current_payload)) -> dict[str, Any]:
         if not token_has_scope(payload, scope):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -84,10 +84,10 @@ async def require_admin_ip(request: Request) -> None:
 
 # ── Redis client ──────────────────────────────────────────────────────────────
 
-_redis_pool: aioredis.Redis | None = None
+_redis_pool: aioredis.Redis[Any] | None = None
 
 
-async def _get_redis() -> aioredis.Redis:
+async def _get_redis() -> aioredis.Redis[Any]:
     global _redis_pool
     if _redis_pool is None:
         _redis_pool = await aioredis.from_url(settings.redis_url, decode_responses=True)

@@ -7,6 +7,8 @@ Confirmed-lineup updates always re-post (caller passes is_lineup_update=True).
 
 from __future__ import annotations
 
+from typing import Any
+
 import redis
 
 from src.core.logging import get_logger
@@ -18,7 +20,7 @@ _MIN_PROB_SHIFT = 0.03  # 3 pp
 
 
 def should_send(
-    r: redis.Redis,
+    r: redis.Redis[Any],
     game_id: str | int,
     target: str,
     current_prob: float,
@@ -55,7 +57,7 @@ def should_send(
 
 
 def record_send(
-    r: redis.Redis,
+    r: redis.Redis[Any],
     game_id: str | int,
     target: str,
     prob: float,
@@ -66,7 +68,7 @@ def record_send(
 
 
 def _record_send(
-    r: redis.Redis,
+    r: redis.Redis[Any],
     game_id: str | int,
     target: str,
     prob: float,

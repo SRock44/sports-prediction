@@ -80,7 +80,7 @@ def backfill(
                 typer.echo()
 
         elif sport == "mlb":
-            from src.ingest.mlb.games import ingest_season_schedule
+            from src.ingest.mlb.games import ingest_season_schedule  # type: ignore[assignment]
 
             for season_year in season_years:
                 typer.echo(f"  Season {season_year}…", nl=False)

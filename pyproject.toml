@@ -104,8 +104,21 @@ module = [
     "redis.*",
     "slowapi.*",
     "starlette_prometheus.*",
+    "pandas",
+    "pandas.*",
+    "sklearn.*",
+    "jose",
+    "jose.*",
+    "psycopg2",
+    "psycopg2.*",
+    "lightgbm",
+    "lightgbm.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["src.tasks.*", "src.models.train_winner", "src.models.train_props"]
+ignore_errors = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

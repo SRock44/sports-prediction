@@ -20,7 +20,7 @@ router = APIRouter(tags=["predictions"])
 @router.get("/predictions/game/{game_id}")
 async def game_prediction(
     game_id: int,
-    payload: dict = Depends(require_scope("predictions:read")),
+    payload: dict[str, Any] = Depends(require_scope("predictions:read")),
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """Win/loss prediction for a game."""
@@ -47,7 +47,7 @@ async def game_prediction(
 @router.get("/predictions/props/{game_id}")
 async def game_props(
     game_id: int,
-    payload: dict = Depends(require_scope("predictions:read")),
+    payload: dict[str, Any] = Depends(require_scope("predictions:read")),
     session: AsyncSession = Depends(get_async_session),
 ) -> list[dict[str, Any]]:
     """All player prop predictions for a game."""
@@ -73,7 +73,7 @@ async def game_props(
 async def player_props(
     player_id: int,
     game_id: int = Query(...),
-    payload: dict = Depends(require_scope("predictions:read")),
+    payload: dict[str, Any] = Depends(require_scope("predictions:read")),
     session: AsyncSession = Depends(get_async_session),
 ) -> list[dict[str, Any]]:
     """Props for a specific player in a specific game."""

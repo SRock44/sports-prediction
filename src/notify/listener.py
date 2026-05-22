@@ -100,13 +100,13 @@ def _build_prediction_payload(
     return pred_dict, props
 
 
-def _dispatch(payload: dict[str, Any], r: redis.Redis, settings: Any) -> None:
+def _dispatch(payload: dict[str, Any], r: redis.Redis[Any], settings: Any) -> None:
     game_id = payload.get("game_id")
     target = payload.get("target", "home_win")
     probability = float(payload.get("probability", 0.5))
     is_lineup_update = bool(payload.get("is_lineup_update", False))
 
-    if not should_send(r, game_id, target, probability, is_lineup_update):
+    if not should_send(r, game_id, target, probability, is_lineup_update):  # type: ignore[arg-type]
         return
 
     with get_sync_session() as session:
@@ -116,7 +116,7 @@ def _dispatch(payload: dict[str, Any], r: redis.Redis, settings: Any) -> None:
             return
 
         game_info = _build_game_info(session, game)
-        prediction, props = _build_prediction_payload(session, game_id, target)
+        prediction, props = _build_prediction_payload(session, game_id, target)  # type: ignore[arg-type]
         if prediction is None:
             log.warning("notify.prediction_not_found", game_id=game_id, target=target)
             return
@@ -165,10 +165,10 @@ def _dispatch(payload: dict[str, Any], r: redis.Redis, settings: Any) -> None:
                 log.warning("notify.telegram_failed", error=str(exc))
 
     if delivered:
-        record_send(r, game_id, target, probability)
+        record_send(r, game_id, target, probability)  # type: ignore[arg-type]
 
 
-def _listen_loop(conn: psycopg2.extensions.connection, r: redis.Redis, settings: Any) -> None:
+def _listen_loop(conn: psycopg2.extensions.connection, r: redis.Redis[Any], settings: Any) -> None:
     conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
     with conn.cursor() as cur:
         cur.execute(f"LISTEN {_CHANNEL};")
@@ -213,7 +213,7 @@ def run() -> None:
             from contextlib import suppress
 
             with suppress(Exception):
-                conn.close()  # type: ignore[possibly-undefined]
+                conn.close()
 
     log.info("notify.stopped")
     sys.exit(0)

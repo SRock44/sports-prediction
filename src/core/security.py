@@ -60,7 +60,7 @@ def create_access_token(
     }
     if extra:
         payload.update(extra)
-    return jwt.encode(
+    return jwt.encode(  # type: ignore[no-any-return]
         payload, settings.jwt_secret.get_secret_value(), algorithm=settings.jwt_algorithm
     )
 
