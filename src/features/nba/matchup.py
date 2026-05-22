@@ -16,6 +16,7 @@ from src.core.logging import get_logger
 from src.features.common import (
     compute_elo_series,
     load_team_game_stats_before,
+    load_game_odds,
     haversine_km,
 )
 from src.features.nba.team import build_team_features
@@ -44,12 +45,17 @@ def build_matchup_features(
     home_elo = elo_ratings.get(home_team_id, 1500.0)
     away_elo = elo_ratings.get(away_team_id, 1500.0)
 
+    # ── Venue longitude (for timezone fatigue) ────────────────────────────────
+    venue_lon = _get_venue_lon(session, game_id)
+
     # ── Team-level features ───────────────────────────────────────────────────
     home_feats = build_team_features(
-        session, home_team_id, as_of, home_elo, opponent_id=away_team_id, is_home=True
+        session, home_team_id, as_of, home_elo,
+        opponent_id=away_team_id, is_home=True, current_venue_lon=venue_lon,
     )
     away_feats = build_team_features(
-        session, away_team_id, as_of, away_elo, opponent_id=home_team_id, is_home=False
+        session, away_team_id, as_of, away_elo,
+        opponent_id=home_team_id, is_home=False, current_venue_lon=venue_lon,
     )
 
     # Prefix team features
@@ -98,6 +104,29 @@ def build_matchup_features(
     # ── Venue travel ──────────────────────────────────────────────────────────
     venue_feats = _get_travel_features(session, game_id, home_team_id, away_team_id, as_of)
     matchup.update(venue_feats)
+
+    # ── Roster quality cross-features ─────────────────────────────────────────
+    matchup["roster_star_pts_diff"] = home_feats["roster_star_pts"] - away_feats["roster_star_pts"]
+    matchup["roster_star_ts_diff"] = home_feats["roster_star_ts_pct"] - away_feats["roster_star_ts_pct"]
+    matchup["roster_depth_diff"] = home_feats["roster_depth_score"] - away_feats["roster_depth_score"]
+    # Away team's road fatigue relative to home rest
+    matchup["road_streak_away"] = away_feats["road_game_streak"]
+    matchup["tz_change_away"] = away_feats["tz_hours_change"]
+
+    # ── Market signals (odds) ─────────────────────────────────────────────────
+    odds = load_game_odds(session, game_id)
+    if odds:
+        matchup.update(odds)
+    else:
+        # Defaults when no odds data available yet
+        matchup["odds_open_implied_home"] = 0.5
+        matchup["odds_close_implied_home"] = 0.5
+        matchup["odds_line_move"] = 0.0
+        matchup["odds_sharp_move"] = 0
+        matchup["odds_open_spread"] = 0.0
+
+    # ── Referee tendencies ────────────────────────────────────────────────────
+    matchup.update(_get_referee_features(session, game_id))
 
     return matchup
 
@@ -155,6 +184,64 @@ def _get_h2h(
         elif row.home_team_id == away_team_id and row.away_score > row.home_score:
             home_wins += 1
     return {"home_wins": home_wins, "total": len(rows)}
+
+
+def _get_venue_lon(session: Session, game_id: int) -> float | None:
+    """Return longitude of a game's venue."""
+    result = session.execute(
+        text("SELECT v.lon FROM games g JOIN venues v ON v.id = g.venue_id WHERE g.id = :gid AND v.lon IS NOT NULL"),
+        {"gid": game_id},
+    ).first()
+    return float(result.lon) if result else None
+
+
+def _get_referee_features(session: Session, game_id: int) -> dict[str, Any]:
+    """Aggregate referee crew tendencies for this game.
+
+    Referees are stored in games.meta['officials'] as a list of names.
+    We look up each referee's historical stats from past games they worked.
+    Gracefully returns defaults if data isn't available yet.
+    """
+    defaults = {
+        "ref_foul_rate": 42.0,   # avg fouls called per game
+        "ref_pace_factor": 1.0,  # relative pace vs league avg
+        "ref_home_win_pct": 0.5, # how often home team wins with this crew
+    }
+    try:
+        game_meta = session.execute(
+            text("SELECT meta FROM games WHERE id = :gid"), {"gid": game_id}
+        ).scalar()
+        officials = (game_meta or {}).get("officials", [])
+        if not officials:
+            return defaults
+
+        # Query historical games officiated by any of these referees
+        result = session.execute(
+            text("""
+                SELECT
+                    AVG(CASE WHEN (tgs.stats->'traditional'->>'personalFouls')::float IS NOT NULL
+                             THEN (tgs.stats->'traditional'->>'personalFouls')::float ELSE NULL END) AS avg_fouls,
+                    AVG(CASE WHEN (tgs.stats->'advanced'->>'pace')::float IS NOT NULL
+                             THEN (tgs.stats->'advanced'->>'pace')::float ELSE NULL END) AS avg_pace,
+                    AVG(CASE WHEN g.home_score > g.away_score THEN 1.0 ELSE 0.0 END) AS home_win_pct,
+                    COUNT(DISTINCT g.id) AS n_games
+                FROM games g
+                JOIN team_game_stats tgs ON tgs.game_id = g.id
+                WHERE g.status = 'final'
+                  AND g.meta->'officials' ?| :officials
+            """),
+            {"officials": officials},
+        ).first()
+
+        if result and result.n_games and result.n_games >= 5:
+            return {
+                "ref_foul_rate": float(result.avg_fouls or 42.0),
+                "ref_pace_factor": (result.avg_pace or 100.0) / 100.0,
+                "ref_home_win_pct": float(result.home_win_pct or 0.5),
+            }
+    except Exception:
+        pass
+    return defaults
 
 
 def _get_travel_features(

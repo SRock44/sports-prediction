@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from src.features.common import compute_elo_series, load_team_game_stats_before
+from src.features.common import compute_elo_series, load_team_game_stats_before, load_game_odds, load_game_weather
 from src.features.mlb.team import build_team_features, _PARK_FACTORS
 
 
@@ -97,6 +97,41 @@ def build_matchup_features(
     h2h = _get_h2h(session, home_team_id, away_team_id, as_of, 5)
     matchup["h2h_home_win_pct"] = h2h["home_wins"] / max(h2h["total"], 1)
     matchup["h2h_total"] = h2h["total"]
+
+    # ── Market signals (odds) ─────────────────────────────────────────────────
+    odds = load_game_odds(session, game_id)
+    if odds:
+        matchup.update(odds)
+    else:
+        matchup["odds_open_implied_home"] = 0.5
+        matchup["odds_close_implied_home"] = 0.5
+        matchup["odds_line_move"] = 0.0
+        matchup["odds_sharp_move"] = 0
+        matchup["odds_open_spread"] = 0.0
+
+    # ── Weather (MLB only — outdoor parks) ───────────────────────────────────
+    weather = load_game_weather(session, game_id)
+    if weather:
+        matchup.update(weather)
+        # Wind factor relative to ballpark orientation (+1 = blowing out, -1 = in)
+        if park_abbrev:
+            from src.ingest.mlb.weather import wind_out_factor
+            matchup["weather_wind_out_factor"] = wind_out_factor(
+                weather.get("weather_wind_mph", 5.0),
+                weather.get("weather_wind_bearing", 180.0),
+                park_abbrev,
+            )
+        else:
+            matchup["weather_wind_out_factor"] = 0.0
+    else:
+        matchup["weather_temp_f"] = 72.0
+        matchup["weather_wind_mph"] = 5.0
+        matchup["weather_wind_bearing"] = 180.0
+        matchup["weather_precip_prob"] = 0.0
+        matchup["weather_wind_out_factor"] = 0.0
+
+    # ── Umpire tendencies ─────────────────────────────────────────────────────
+    matchup.update(_get_umpire_features(session, game_id))
 
     return matchup
 
@@ -195,6 +230,65 @@ def _sp_rolling_form(
         }
     except Exception:
         return defaults
+
+
+def _get_umpire_features(session: Session, game_id: int) -> dict[str, Any]:
+    """Compute home plate umpire tendencies from historical games they worked.
+
+    Umpires stored in games.meta['umpires'] as a list; first entry is HP ump.
+    Graceful fallback to league averages if data unavailable.
+    """
+    defaults = {
+        "ump_k_rate": 0.215,   # strikeouts per batter faced (league avg ~21.5%)
+        "ump_bb_rate": 0.082,  # walks per batter faced
+        "ump_home_bias": 0.0,  # deviation from 0.5 home win pct
+    }
+    try:
+        game_meta = session.execute(
+            text("SELECT meta FROM games WHERE id = :gid"), {"gid": game_id}
+        ).scalar()
+        umpires = (game_meta or {}).get("umpires", [])
+        hp_ump = umpires[0] if umpires else None
+        if not hp_ump:
+            return defaults
+
+        result = session.execute(
+            text("""
+                SELECT
+                    AVG(
+                        CASE WHEN (pgs.stats->'pitching'->>'strikeOuts')::float IS NOT NULL
+                             AND (pgs.stats->'pitching'->>'battersFaced')::float > 0
+                             THEN (pgs.stats->'pitching'->>'strikeOuts')::float /
+                                  (pgs.stats->'pitching'->>'battersFaced')::float
+                             ELSE NULL END
+                    ) AS k_rate,
+                    AVG(
+                        CASE WHEN (pgs.stats->'pitching'->>'baseOnBalls')::float IS NOT NULL
+                             AND (pgs.stats->'pitching'->>'battersFaced')::float > 0
+                             THEN (pgs.stats->'pitching'->>'baseOnBalls')::float /
+                                  (pgs.stats->'pitching'->>'battersFaced')::float
+                             ELSE NULL END
+                    ) AS bb_rate,
+                    AVG(CASE WHEN g.home_score > g.away_score THEN 1.0 ELSE 0.0 END) AS home_win_pct,
+                    COUNT(DISTINCT g.id) AS n_games
+                FROM games g
+                JOIN player_game_stats pgs ON pgs.game_id = g.id
+                WHERE g.status = 'final'
+                  AND g.meta->'umpires' @> :hp_ump_json::jsonb
+                  AND pgs.stats->'pitching' IS NOT NULL
+            """),
+            {"hp_ump_json": f'["{hp_ump}"]'},
+        ).first()
+
+        if result and result.n_games and result.n_games >= 10:
+            return {
+                "ump_k_rate": float(result.k_rate or 0.215),
+                "ump_bb_rate": float(result.bb_rate or 0.082),
+                "ump_home_bias": float((result.home_win_pct or 0.5) - 0.5),
+            }
+    except Exception:
+        pass
+    return defaults
 
 
 def _get_h2h(

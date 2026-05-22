@@ -13,6 +13,20 @@ BEAT_SCHEDULE = {
         "task": "src.tasks.ingest_tasks.ingest_yesterday_mlb",
         "schedule": crontab(hour=9, minute=30),
     },
+    # ── Odds (opening lines at 14:00 UTC, closing lines at 22:00 UTC) ──────────
+    "ingest-odds-open": {
+        "task": "src.tasks.ingest_tasks.ingest_odds_open",
+        "schedule": crontab(hour=14, minute=0),
+    },
+    "ingest-odds-close": {
+        "task": "src.tasks.ingest_tasks.ingest_odds_close",
+        "schedule": crontab(hour=22, minute=0),
+    },
+    # ── MLB weather (18:00 UTC — 5-day lookahead, updates every afternoon) ────
+    "ingest-mlb-weather": {
+        "task": "src.tasks.ingest_tasks.ingest_mlb_weather",
+        "schedule": crontab(hour=18, minute=0),
+    },
     # ── Injury reports (11:00 UTC) ────────────────────────────────────────────
     "refresh-nba-injuries": {
         "task": "src.tasks.ingest_tasks.refresh_nba_injuries",

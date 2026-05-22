@@ -1,6 +1,7 @@
 """Re-export all ORM models so Alembic autogenerate picks them up."""
 from src.db.models.base import Base
 from src.db.models.auth import ApiKey, ApiRequest
+from src.db.models.odds import GameOdds, GameWeather
 from src.db.models.prediction import (
     DriftEvent,
     MatchupFeature,
@@ -24,8 +25,8 @@ from src.db.models.sport import (
 )
 
 __all__ = [
-    "Base", "ApiKey", "ApiRequest", "DriftEvent", "Game", "Injury",
-    "Lineup", "MatchupFeature", "ModelRecord", "Play", "Player", "PlayerFeature",
+    "Base", "ApiKey", "ApiRequest", "DriftEvent", "Game", "GameOdds", "GameWeather",
+    "Injury", "Lineup", "MatchupFeature", "ModelRecord", "Play", "Player", "PlayerFeature",
     "PlayerGameStats", "Prediction", "PredictionAudit", "Sport", "Team",
     "TeamFeature", "TeamGameStats", "Venue",
 ]

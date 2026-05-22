@@ -173,6 +173,127 @@ def load_injuries_before(
     return [dict(row._mapping) for row in result]
 
 
+# ── Odds & weather loaders ────────────────────────────────────────────────────
+
+def load_game_odds(session: Session, game_id: int) -> dict[str, Any]:
+    """Return implied probability and spread from stored odds. Graceful on missing table."""
+    try:
+        result = session.execute(
+            text("""
+                SELECT market, snapshot, home_price, away_price, home_spread
+                FROM game_odds
+                WHERE game_id = :gid
+                ORDER BY snapshot DESC
+            """),
+            {"gid": game_id},
+        )
+        rows = [dict(r._mapping) for r in result]
+    except Exception:
+        return {}
+
+    if not rows:
+        return {}
+
+    def american_to_prob(p: float) -> float:
+        if p > 0:
+            return 100.0 / (p + 100.0)
+        return abs(p) / (abs(p) + 100.0)
+
+    out: dict[str, Any] = {}
+    for row in rows:
+        if row["market"] == "h2h" and row["home_price"] is not None:
+            snap = row["snapshot"]
+            out[f"odds_{snap}_implied_home"] = american_to_prob(row["home_price"])
+            out[f"odds_{snap}_home_price"] = row["home_price"]
+        if row["market"] == "spreads" and row["home_spread"] is not None:
+            out[f"odds_{row['snapshot']}_spread"] = row["home_spread"]
+
+    # Line movement: close - open implied prob (positive = line moved toward home)
+    if "odds_close_implied_home" in out and "odds_open_implied_home" in out:
+        out["odds_line_move"] = out["odds_close_implied_home"] - out["odds_open_implied_home"]
+        out["odds_sharp_move"] = int(abs(out["odds_line_move"]) > 0.03)
+    elif "odds_open_implied_home" in out:
+        out["odds_line_move"] = 0.0
+        out["odds_sharp_move"] = 0
+
+    return out
+
+
+def load_game_weather(session: Session, game_id: int) -> dict[str, Any]:
+    """Return weather features for a game. Graceful on missing table."""
+    try:
+        result = session.execute(
+            text("SELECT temp_f, wind_mph, wind_bearing, precip_prob FROM game_weather WHERE game_id = :gid"),
+            {"gid": game_id},
+        ).first()
+    except Exception:
+        return {}
+
+    if result is None:
+        return {}
+
+    return {
+        "weather_temp_f": result.temp_f or 72.0,
+        "weather_wind_mph": result.wind_mph or 5.0,
+        "weather_wind_bearing": result.wind_bearing or 180.0,
+        "weather_precip_prob": result.precip_prob or 0.0,
+    }
+
+
+def load_team_top_player_stats(
+    session: Session,
+    team_id: int,
+    as_of_utc: datetime,
+    n_games: int = 10,
+    top_n: int = 8,
+) -> list[dict[str, Any]]:
+    """Return per-player averages for the top N players by minutes over last n_games.
+
+    Used to build roster-quality features for the winner model.
+    """
+    from datetime import timedelta
+    since = as_of_utc - timedelta(days=n_games * 3)  # generous window
+    try:
+        result = session.execute(
+            text("""
+                WITH recent AS (
+                    SELECT
+                        pgs.player_id,
+                        AVG(NULLIF((pgs.stats->'traditional'->>'points')::float, 0)) AS avg_pts,
+                        AVG(NULLIF((pgs.stats->'traditional'->>'minutesCalculated')::float, 0)) AS avg_min,
+                        AVG(
+                            CASE
+                              WHEN ((pgs.stats->'traditional'->>'fieldGoalsAttempted')::float
+                                    + 0.44 * (pgs.stats->'traditional'->>'freeThrowsAttempted')::float) > 0
+                              THEN (pgs.stats->'traditional'->>'points')::float /
+                                   (2 * ((pgs.stats->'traditional'->>'fieldGoalsAttempted')::float
+                                         + 0.44 * (pgs.stats->'traditional'->>'freeThrowsAttempted')::float))
+                              ELSE NULL
+                            END
+                        ) AS avg_ts_pct,
+                        AVG(NULLIF((pgs.stats->'advanced'->>'usagePercentage')::float, 0)) AS avg_usage,
+                        COUNT(*) AS games_played
+                    FROM player_game_stats pgs
+                    JOIN games g ON g.id = pgs.game_id
+                    WHERE pgs.team_id = :team_id
+                      AND g.scheduled_utc >= :since
+                      AND g.scheduled_utc < :as_of
+                      AND g.status = 'final'
+                      AND (pgs.stats->'traditional'->>'minutesCalculated')::float > 5
+                    GROUP BY pgs.player_id
+                    HAVING COUNT(*) >= 3
+                    ORDER BY avg_min DESC
+                    LIMIT :top_n
+                )
+                SELECT * FROM recent
+            """),
+            {"team_id": team_id, "since": since, "as_of": as_of_utc, "top_n": top_n},
+        )
+        return [dict(r._mapping) for r in result]
+    except Exception:
+        return []
+
+
 # ── Feature spec hash ─────────────────────────────────────────────────────────
 
 def feature_spec_hash(feature_names: list[str]) -> str:

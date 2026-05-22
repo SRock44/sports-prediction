@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from src.core.logging import get_logger
 from src.features.common import (
     load_team_game_stats_before,
+    load_team_top_player_stats,
     rolling_mean,
     haversine_km,
 )
@@ -22,6 +23,10 @@ from src.features.common import (
 log = get_logger(__name__)
 
 _WINDOWS = [5, 10, 20]
+
+# Approximate UTC offset from longitude (15° = 1 hour).
+def _lon_to_tz_offset(lon: float) -> float:
+    return round(lon / 15.0)
 
 
 def build_team_features(
@@ -31,6 +36,7 @@ def build_team_features(
     elo_rating: float,
     opponent_id: int | None = None,
     is_home: bool = True,
+    current_venue_lon: float | None = None,
 ) -> dict[str, Any]:
     """Build team features for game-winner model."""
     games = load_team_game_stats_before(session, team_id, as_of_utc, limit=40)
@@ -141,10 +147,82 @@ def build_team_features(
     # ── Travel placeholder (populated by matchup builder) ────────────────────
     feats["travel_km"] = 0.0
 
+    # ── Timezone fatigue: consecutive road games + tz change ─────────────────
+    road_streak = 0
+    for h in reversed(home_flags):
+        if h == 0:
+            road_streak += 1
+        else:
+            break
+    feats["road_game_streak"] = road_streak
+
+    # Timezone change vs current venue (hours)
+    feats["tz_hours_change"] = 0.0
+    if current_venue_lon is not None and game_dates:
+        last_game = max(game_dates)
+        prev_venue_lon = _get_last_venue_lon(session, team_id, last_game)
+        if prev_venue_lon is not None:
+            feats["tz_hours_change"] = abs(
+                _lon_to_tz_offset(current_venue_lon) - _lon_to_tz_offset(prev_venue_lon)
+            )
+
     # ── Injury-adjusted starter availability ─────────────────────────────────
     feats["starter_availability"] = _get_starter_availability(session, team_id, as_of_utc)
 
+    # ── Roster quality: player-level efficiency aggregates ────────────────────
+    feats.update(_get_roster_quality(session, team_id, as_of_utc))
+
     return feats
+
+
+def _get_last_venue_lon(session: Session, team_id: int, before_utc: datetime) -> float | None:
+    """Return the longitude of the venue for the most recent game before before_utc."""
+    from sqlalchemy import text
+    try:
+        result = session.execute(
+            text("""
+                SELECT v.lon FROM games g
+                JOIN venues v ON v.id = g.venue_id
+                WHERE (g.home_team_id = :tid OR g.away_team_id = :tid)
+                  AND g.scheduled_utc < :before
+                  AND g.status = 'final'
+                  AND v.lon IS NOT NULL
+                ORDER BY g.scheduled_utc DESC LIMIT 1
+            """),
+            {"tid": team_id, "before": before_utc},
+        ).first()
+        return float(result.lon) if result else None
+    except Exception:
+        return None
+
+
+def _get_roster_quality(session: Session, team_id: int, as_of_utc: datetime) -> dict[str, Any]:
+    """Aggregate player-level efficiency into roster-quality signals."""
+    players = load_team_top_player_stats(session, team_id, as_of_utc, n_games=10, top_n=8)
+    if not players:
+        return {
+            "roster_star_pts": 20.0, "roster_star_ts_pct": 0.540,
+            "roster_depth_score": 0.540, "star_usage_conc": 0.50,
+        }
+
+    pts = [p["avg_pts"] or 0.0 for p in players]
+    ts = [p["avg_ts_pct"] or 0.540 for p in players]
+    usage = [p["avg_usage"] or 0.20 for p in players]
+
+    # Stars = top 2 by points
+    top2_pts = sorted(pts, reverse=True)[:2]
+    top2_ts = [ts[i] for i in sorted(range(len(pts)), key=lambda x: pts[x], reverse=True)[:2]]
+    depth_ts = [ts[i] for i in sorted(range(len(pts)), key=lambda x: pts[x], reverse=True)[2:]]
+
+    total_usage = sum(usage) or 1.0
+    star_usage = sum(sorted(usage, reverse=True)[:2])
+
+    return {
+        "roster_star_pts": float(np.mean(top2_pts)) if top2_pts else 20.0,
+        "roster_star_ts_pct": float(np.mean(top2_ts)) if top2_ts else 0.540,
+        "roster_depth_score": float(np.mean(depth_ts)) if depth_ts else 0.540,
+        "star_usage_conc": star_usage / total_usage,
+    }
 
 
 def _get_starter_availability(session: Session, team_id: int, as_of_utc: datetime) -> float:
@@ -205,7 +283,13 @@ def _fill_defaults(feats: dict[str, Any]) -> None:
     feats["three_in_four"] = 0
     feats["four_in_six"] = 0
     feats["travel_km"] = 0.0
+    feats["road_game_streak"] = 0
+    feats["tz_hours_change"] = 0.0
     feats["starter_availability"] = 1.0
+    feats["roster_star_pts"] = 20.0
+    feats["roster_star_ts_pct"] = 0.540
+    feats["roster_depth_score"] = 0.540
+    feats["star_usage_conc"] = 0.50
 
 
 def _sf(v: Any) -> float | None:

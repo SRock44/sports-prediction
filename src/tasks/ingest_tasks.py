@@ -112,4 +112,40 @@ def poll_live_mlb() -> dict:
     return result
 
 
+@shared_task(name="src.tasks.ingest_tasks.ingest_odds_open", bind=True, max_retries=2)
+def ingest_odds_open(self: Any) -> dict:
+    """Fetch opening lines from DraftKings, FanDuel, and Kalshi (~24h before tip-off)."""
+    from src.ingest.odds.games import ingest_odds
+    total = 0
+    with sync_session_factory() as session:
+        for sport in ("nba", "mlb"):
+            r = ingest_odds(session, sport, snapshot="open")
+            total += r.rows_inserted
+        session.commit()
+    return {"inserted": total}
+
+
+@shared_task(name="src.tasks.ingest_tasks.ingest_odds_close", bind=True, max_retries=2)
+def ingest_odds_close(self: Any) -> dict:
+    """Fetch closing lines from DraftKings, FanDuel, and Kalshi (~1h before tip-off)."""
+    from src.ingest.odds.games import ingest_odds
+    total = 0
+    with sync_session_factory() as session:
+        for sport in ("nba", "mlb"):
+            r = ingest_odds(session, sport, snapshot="close")
+            total += r.rows_inserted
+        session.commit()
+    return {"inserted": total}
+
+
+@shared_task(name="src.tasks.ingest_tasks.ingest_mlb_weather", bind=True, max_retries=2)
+def ingest_mlb_weather(self: Any) -> dict:
+    """Fetch weather forecasts for upcoming MLB outdoor games."""
+    from src.ingest.mlb.weather import ingest_weather_for_upcoming
+    with sync_session_factory() as session:
+        result = ingest_weather_for_upcoming(session, lookahead_days=5)
+        session.commit()
+    return {"inserted": result.rows_inserted, "updated": result.rows_updated}
+
+
 from typing import Any  # noqa: E402
