@@ -31,7 +31,7 @@ from src.models.registry import log_model_run
 
 log = get_logger(__name__)
 
-_LAMBDA = {"nba": 0.55, "mlb": 0.30}
+_LAMBDA = {"nba": 0.30, "mlb": 0.20}
 
 try:
     import lightgbm as lgb
@@ -49,7 +49,7 @@ except Exception:
     _GPU = False
 
 _XGB_DEVICE = "cuda" if _GPU else "cpu"
-_LGB_DEVICE = "cpu"  # LightGBM GPU requires OpenCL, not CUDA; CPU is fast enough
+_LGB_DEVICE = "cuda" if _GPU else "cpu"
 
 
 def _optuna_callback(model_tag: str, n_trials: int, start_time: float):
@@ -181,9 +181,9 @@ def train_winner_model(
 
     training_df = training_df.sort_values("game_date").reset_index(drop=True)
 
-    # Last 15% held for calibration; Optuna walks forward over the rest
+    # Last 20% held for calibration; more data = better isotonic fit, less overfitting
     n = len(training_df)
-    calib_start = int(n * 0.85)
+    calib_start = int(n * 0.80)
     train_part = training_df.iloc[:calib_start]
     calib_part = training_df.iloc[calib_start:]
 
@@ -225,16 +225,16 @@ def train_winner_model(
     # ── XGBoost Optuna search ─────────────────────────────────────────────────
     def xgb_objective(trial: optuna.Trial) -> float:
         params = {
-            "n_estimators": trial.suggest_int("n_estimators", 200, 3000),
-            "max_depth": trial.suggest_int("max_depth", 3, 8),
-            "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.15, log=True),
-            "subsample": trial.suggest_float("subsample", 0.5, 1.0),
-            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.4, 1.0),
-            "colsample_bylevel": trial.suggest_float("colsample_bylevel", 0.4, 1.0),
-            "min_child_weight": trial.suggest_int("min_child_weight", 1, 20),
-            "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
-            "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
-            "gamma": trial.suggest_float("gamma", 0.0, 3.0),
+            "n_estimators": trial.suggest_int("n_estimators", 100, 5000),
+            "max_depth": trial.suggest_int("max_depth", 3, 10),
+            "learning_rate": trial.suggest_float("learning_rate", 0.001, 0.2, log=True),
+            "subsample": trial.suggest_float("subsample", 0.4, 1.0),
+            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.3, 1.0),
+            "colsample_bylevel": trial.suggest_float("colsample_bylevel", 0.3, 1.0),
+            "min_child_weight": trial.suggest_int("min_child_weight", 1, 30),
+            "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 100.0, log=True),
+            "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 100.0, log=True),
+            "gamma": trial.suggest_float("gamma", 0.0, 5.0),
         }
         fold_losses = []
         for X_tr, y_tr, w_tr, X_val, y_val, w_val in cv_folds:

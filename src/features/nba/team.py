@@ -107,6 +107,15 @@ def build_team_features(
         won.append(int(hs > aw) if is_home_game else int(aw > hs))
         game_dates.append(g["scheduled_utc"])
 
+    # ── Point differential (avg margin) ──────────────────────────────────────
+    margins: list[float] = []
+    for g in games:
+        is_home_game = g["home_team_id"] == team_id
+        hs = g["home_score"] or 0
+        aw = g["away_score"] or 0
+        margin = (hs - aw) if is_home_game else (aw - hs)
+        margins.append(float(margin))
+
     # ── Rolling efficiency windows ────────────────────────────────────────────
     for w in _WINDOWS:
         feats[f"off_rtg_last{w}"] = rolling_mean(off_rtgs, w) or 110.0
@@ -120,6 +129,9 @@ def build_team_features(
         feats[f"three_par_last{w}"] = rolling_mean(three_pars, w) or 0.350
         feats[f"tov_rate_last{w}"] = rolling_mean(tov_rates, w) or 0.130
         feats[f"oreb_pct_last{w}"] = rolling_mean(oreb_pcts, w) or 0.250
+
+    for w in [5, 10, 20]:
+        feats[f"margin_last{w}"] = rolling_mean(margins, w) or 0.0
 
     # ── Win% at multiple windows ──────────────────────────────────────────────
     for w in [3, 5, 10, 20]:
@@ -281,6 +293,8 @@ def _fill_defaults(feats: dict[str, Any]) -> None:
     for w in [3, 5, 10, 20]:
         feats[f"win_pct_last{w}"] = 0.5
     feats["win_pct_season"] = 0.5
+    for w in [5, 10, 20]:
+        feats[f"margin_last{w}"] = 0.0
     feats["home_win_pct"] = 0.5
     feats["away_win_pct"] = 0.5
     feats["streak"] = 0

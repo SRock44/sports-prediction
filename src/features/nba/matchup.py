@@ -96,6 +96,9 @@ def build_matchup_features(
     matchup["win_pct_diff_last20"] = home_feats["win_pct_last20"] - away_feats["win_pct_last20"]
     matchup["win_pct_season_diff"] = home_feats["win_pct_season"] - away_feats["win_pct_season"]
 
+    matchup["margin_diff_last5"] = home_feats["margin_last5"] - away_feats["margin_last5"]
+    matchup["margin_diff_last10"] = home_feats["margin_last10"] - away_feats["margin_last10"]
+    matchup["margin_diff_last20"] = home_feats["margin_last20"] - away_feats["margin_last20"]
     matchup["streak_diff"] = home_feats["streak"] - away_feats["streak"]
     matchup["b2b_diff"] = home_feats["b2b"] - away_feats["b2b"]
     matchup["schedule_load_diff"] = (
