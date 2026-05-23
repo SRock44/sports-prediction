@@ -116,15 +116,23 @@ Promotion gate: challenger must beat champion by ≥ 0.005 log-loss
 
 ---
 
-## Run 4 — Full Feature Rebuild + 300 Trials (Current)
+## Run 4 — Full Feature Rebuild + 300 Trials
 **Date:** 2026-05-23
-**Trials:** 300
-**Status:** In progress ⏳
+**Trials:** 300 (XGB) + 300 (LGB)
+**Status:** Complete — Not promoted (both sports worse than champion on holdout)
 
-| Sport | XGB Best (so far) | Champion   | Delta   |
-|-------|-------------------|------------|---------|
-| NBA   | **0.63421** (t44) | 0.6677     | -0.033 ✓ |
-| MLB   | **0.68175** (t114)| 0.6891     | -0.007 ✓ |
+| Sport | XGB CV Best | LGB CV Best | Holdout Log-loss | Holdout Accuracy | Holdout ECE | N     | Champion  | Delta      |
+|-------|-------------|-------------|------------------|------------------|-------------|-------|-----------|------------|
+| NBA   | 0.63421 (t44) | 0.63893   | **0.68997**      | 65.00%           | 0.0327      | 1,297 | 0.6677    | +0.022 ✗  |
+| MLB   | 0.68155 (t114)| 0.68252   | **0.69036**      | 54.09%           | 0.0150      | 745   | 0.6891    | +0.001 ✗  |
+
+**Best XGB params (NBA):** n_estimators=4115, max_depth=10, lr=0.030, subsample=0.643, colsample_bytree=0.308
+
+**Best XGB params (MLB):** n_estimators=4806, max_depth=8, lr=0.0019, subsample=0.420, colsample_bytree=0.964
+
+**Best LGB params (NBA):** num_leaves=20, lr=0.012, n_estimators=1511, best_n_trees=305
+
+**Best LGB params (MLB):** num_leaves=28, lr=0.048, n_estimators=1135, best_n_trees=27 (early stopping — underfitting)
 
 **Changes from champion:**
 
@@ -160,10 +168,32 @@ Promotion gate: challenger must beat champion by ≥ 0.005 log-loss
 - **common.py updated:** server had 182-line version missing `load_game_odds`, `load_team_top_player_stats`, `load_game_weather`
 - **NBA feature full rebuild:** 6,548 games rebuilt with `--force` to pick up all new features (0 errors)
 
+### Why it failed — post-mortem
+
+**Root cause: CV loss ≠ holdout loss (Optuna overfit the hyperparameter search)**
+
+The NBA model showed a devastating CV-to-holdout gap: best CV loss 0.634 → holdout 0.690 (+0.056). The MLB gap was smaller (0.682 → 0.690) but still regressed.
+
+1. **Search space too large → overfit HPs.** Widening max_depth to 3-10 and n_estimators to 100-5000 let Optuna find max_depth=10 with 4115 trees for NBA. Those params memorized CV folds perfectly but generalized poorly. The 50-trial champion with a narrower search found more regularized configs.
+
+2. **More NBA features ≠ better signal.** 12 new features added noise. Without feature selection or importance-based pruning, the wider feature set gave the model more ways to overfit.
+
+3. **MLB LGB collapsed to 27 trees.** Early stopping halted LGB at 27 trees (far below the 1135 n_estimators searched). LGB was essentially useless in the ensemble, adding noise rather than signal.
+
+4. **Simpler 50-trial champions still win.** More trials don't help if the search space is too permissive — Optuna finds increasingly overfit configurations after the first few dozen useful trials.
+
+### What to try next
+- **Constrain search space back:** max_depth 3-8, n_estimators 100-2000, lr 0.005-0.3
+- **Feature selection for NBA:** run feature importance on the 300-trial model and drop bottom 30% — more features isn't always better with limited game data
+- **Investigate MLB LGB:** 27-tree early stop suggests the validation curve flatlines fast — may need to tune `min_child_samples` or reduce `num_leaves`
+- **Optuna pruning:** enable MedianPruner to cut unpromising trials early instead of letting bad HPs run to completion
+
 ---
 
 ## Targets
-| Sport | Must beat | Accuracy goal |
-|-------|-----------|---------------|
-| NBA   | 0.6627 log-loss | High 60s% |
-| MLB   | 0.6841 log-loss | Mid 50s%  |
+Champions unchanged after Run 4 — id=3 (NBA) and id=4 (MLB) still active.
+
+| Sport | Champion id | Must beat | Accuracy goal |
+|-------|-------------|-----------|---------------|
+| NBA   | 3           | 0.6627 log-loss | High 60s% |
+| MLB   | 4           | 0.6841 log-loss | Mid 50s%  |
