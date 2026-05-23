@@ -102,7 +102,7 @@ def train(
     sport: Annotated[str, typer.Option("--sport")] = "nba",
     kind: Annotated[str, typer.Option("--kind", help="winner or props")] = "winner",
     promote: Annotated[bool, typer.Option("--promote/--no-promote")] = False,
-    trials: Annotated[int, typer.Option("--trials")] = 50,
+    trials: Annotated[int, typer.Option("--trials")] = 200,
 ) -> None:
     """Train a challenger model. Optionally promote if it beats champion."""
     from src.db.session import get_sync_session
@@ -210,12 +210,20 @@ def _load_training_data(
     if sport_obj is None:
         return pd.DataFrame(), pd.DataFrame(), []
 
+    from sqlalchemy import or_
+
     rows = (
         session.query(Game, MatchupFeature)
         .join(MatchupFeature, MatchupFeature.game_id == Game.id)
         .filter(
             Game.sport_id == sport_obj.id,
             Game.status.in_(["final"]),
+            # Regular season only: NBA stores no game_type (all regular + playoffs
+            # mixed as NULL); MLB uses 'R' for regular season.
+            or_(
+                Game.meta["game_type"] == None,   # noqa: E711 — SQLAlchemy IS NULL
+                Game.meta["game_type"].astext == "R",
+            ),
         )
         .order_by(Game.scheduled_utc)
         .all()

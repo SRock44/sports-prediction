@@ -154,7 +154,12 @@ def build_matchup_features(
 def _get_confirmed_starter(
     session: Session, game_id: int, team_id: int, as_of: datetime
 ) -> dict[str, Any] | None:
-    """Look up confirmed starting pitcher from lineups table."""
+    """Look up confirmed starting pitcher, with box-score fallback.
+
+    Tries lineups table first (live games). For historical games where the lineups
+    table is empty, falls back to identifying the starter as the pitcher with the
+    most innings pitched for that team in the game's box score.
+    """
     row = session.execute(
         text("""
             SELECT players FROM lineups
@@ -167,6 +172,37 @@ def _get_confirmed_starter(
         for p in row.players:
             if p.get("position") in ("SP", "P") and p.get("batting_order") == 0:
                 return p  # type: ignore[no-any-return]
+
+    # Box-score fallback: pitcher with most IP on this team in this game
+    result = session.execute(
+        text("""
+            SELECT pgs.player_id, pl.throws,
+                   (pgs.stats->'pitching'->>'strikeOuts')::float AS k,
+                   COALESCE((pgs.stats->'pitching'->>'baseOnBalls')::float,
+                            (pgs.stats->'pitching'->>'walks')::float, 0) AS bb,
+                   COALESCE((pgs.stats->'pitching'->>'battersFaced')::float, 1) AS bf
+            FROM player_game_stats pgs
+            JOIN players pl ON pl.id = pgs.player_id
+            WHERE pgs.game_id = :gid
+              AND pgs.team_id = :tid
+              AND pgs.stats->'pitching' IS NOT NULL
+              AND (pgs.stats->'pitching'->>'inningsPitched')::float > 0
+            ORDER BY (pgs.stats->'pitching'->>'inningsPitched')::float DESC
+            LIMIT 1
+        """),
+        {"gid": game_id, "tid": team_id},
+    ).first()
+
+    if result:
+        k = float(result.k or 0)
+        bb = float(result.bb or 0)
+        bf = max(float(result.bf or 1), 1.0)
+        return {
+            "player_id": result.player_id,
+            "throws": result.throws or "R",
+            "k_bb_pct": (k - bb) / bf,
+            "xfip": 4.50,  # not available from box score; rolling form fills this
+        }
     return None
 
 

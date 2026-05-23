@@ -130,12 +130,21 @@ def build_matchup_features(
     matchup["road_streak_away"] = away_feats["road_game_streak"]
     matchup["tz_change_away"] = away_feats["tz_hours_change"]
 
+    # ── Strength of schedule (avg Elo of last-10 opponents) ──────────────────
+    home_sos = _get_sos(session, home_team_id, as_of, sport_id, elo_ratings)
+    away_sos = _get_sos(session, away_team_id, as_of, sport_id, elo_ratings)
+    matchup["home_sos_last10"] = home_sos
+    matchup["away_sos_last10"] = away_sos
+    matchup["sos_diff"] = home_sos - away_sos
+
+    # ── Venue home court advantage (historical HW% at this arena) ────────────
+    matchup["venue_hca"] = _get_venue_hca(session, game_id, sport_id, as_of)
+
     # ── Market signals (odds) ─────────────────────────────────────────────────
     odds = load_game_odds(session, game_id)
     if odds:
         matchup.update(odds)
     else:
-        # Defaults when no odds data available yet
         matchup["odds_open_implied_home"] = 0.5
         matchup["odds_close_implied_home"] = 0.5
         matchup["odds_line_move"] = 0.0
@@ -262,6 +271,62 @@ def _get_referee_features(session: Session, game_id: int) -> dict[str, Any]:
     except Exception:
         pass
     return defaults
+
+
+def _get_sos(
+    session: Session,
+    team_id: int,
+    as_of: datetime,
+    sport_id: int,
+    elo_ratings: dict[int, float],
+    window: int = 10,
+) -> float:
+    """Average Elo of last `window` opponents — proxy for strength of schedule."""
+    result = session.execute(
+        text("""
+            SELECT CASE WHEN home_team_id = :tid THEN away_team_id ELSE home_team_id END AS opp_id
+            FROM games
+            WHERE (home_team_id = :tid OR away_team_id = :tid)
+              AND sport_id = :sid
+              AND scheduled_utc < :as_of
+              AND status = 'final'
+            ORDER BY scheduled_utc DESC
+            LIMIT :window
+        """),
+        {"tid": team_id, "sid": sport_id, "as_of": as_of, "window": window},
+    )
+    opp_ids = [r.opp_id for r in result]
+    if not opp_ids:
+        return 1500.0
+    return sum(elo_ratings.get(oid, 1500.0) for oid in opp_ids) / len(opp_ids)
+
+
+def _get_venue_hca(
+    session: Session,
+    game_id: int,
+    sport_id: int,
+    as_of: datetime,
+    min_games: int = 30,
+) -> float:
+    """Historical home win% at this game's venue, using only games before as_of."""
+    result = session.execute(
+        text("""
+            SELECT
+                AVG(CASE WHEN g.home_score > g.away_score THEN 1.0 ELSE 0.0 END) AS hw_pct,
+                COUNT(*) AS n_games
+            FROM games g
+            JOIN games this_game ON this_game.id = :gid
+            WHERE g.venue_id = this_game.venue_id
+              AND g.sport_id = :sid
+              AND g.status = 'final'
+              AND g.home_score IS NOT NULL
+              AND g.scheduled_utc < :as_of
+        """),
+        {"gid": game_id, "sid": sport_id, "as_of": as_of},
+    ).first()
+    if result and result.n_games and result.n_games >= min_games:
+        return float(result.hw_pct)
+    return 0.60  # NBA league-average home win rate
 
 
 def _get_travel_features(

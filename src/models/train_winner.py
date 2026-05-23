@@ -31,7 +31,7 @@ from src.models.registry import log_model_run
 
 log = get_logger(__name__)
 
-_LAMBDA = {"nba": 0.30, "mlb": 0.20}
+_LAMBDA = {"nba": 0.55, "mlb": 0.30}
 
 try:
     import lightgbm as lgb
@@ -167,6 +167,16 @@ def train_winner_model(
     """Train calibrated ensemble model. Returns (mlflow_run_id, metrics_dict)."""
     lam = _LAMBDA.get(sport, 0.25)
 
+    # Drop near-constant features — catches empty odds/lineup tables where every
+    # row has the same hardcoded default, which adds noise rather than signal.
+    feat_stds = training_df[feature_names].std()
+    live_features = feat_stds[feat_stds > 1e-6].index.tolist()
+    dropped = [f for f in feature_names if f not in live_features]
+    if dropped:
+        print(f"[Prep] Dropping {len(dropped)} near-constant features: "
+              f"{', '.join(dropped[:8])}{'...' if len(dropped) > 8 else ''}")
+        feature_names = live_features
+
     training_df = training_df.sort_values("game_date").reset_index(drop=True)
 
     # Last 15% held for calibration; Optuna walks forward over the rest
@@ -282,6 +292,8 @@ def train_winner_model(
         print(f"[XGBoost] Saved best params to {_params_path}\n")
 
     # Refine n_estimators with early stopping against calib set
+    # Note: callbacks omitted — XGBoost 3.x routes constructor callbacks through
+    # inner_f which re-passes them to fit() where they are no longer accepted.
     _finder = xgb.XGBClassifier(
         **{k: v for k, v in best_xgb_params.items() if k != "n_estimators"},
         n_estimators=5000,
@@ -291,7 +303,6 @@ def train_winner_model(
         device=_XGB_DEVICE,
         early_stopping_rounds=50,
         random_state=42,
-        callbacks=[_XGBProgressCallback(every=200, tag="XGB early-stop")],
     )
     print("[XGBoost] Early-stopping fit (max 5000 trees, stop after 50 no-improve) ...")
     _es_t0 = time.time()
