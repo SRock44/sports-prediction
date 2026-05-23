@@ -221,7 +221,7 @@ def _load_training_data(
             # Regular season only: NBA stores no game_type (all regular + playoffs
             # mixed as NULL); MLB uses 'R' for regular season.
             or_(
-                Game.meta["game_type"] == None,   # noqa: E711 — SQLAlchemy IS NULL
+                Game.meta["game_type"] == None,  # noqa: E711 — SQLAlchemy IS NULL
                 Game.meta["game_type"].astext == "R",
             ),
         )

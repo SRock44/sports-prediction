@@ -173,8 +173,10 @@ def train_winner_model(
     live_features = feat_stds[feat_stds > 1e-6].index.tolist()
     dropped = [f for f in feature_names if f not in live_features]
     if dropped:
-        print(f"[Prep] Dropping {len(dropped)} near-constant features: "
-              f"{', '.join(dropped[:8])}{'...' if len(dropped) > 8 else ''}")
+        print(
+            f"[Prep] Dropping {len(dropped)} near-constant features: "
+            f"{', '.join(dropped[:8])}{'...' if len(dropped) > 8 else ''}"
+        )
         feature_names = live_features
 
     training_df = training_df.sort_values("game_date").reset_index(drop=True)
