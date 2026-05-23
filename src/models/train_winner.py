@@ -49,7 +49,7 @@ except Exception:
     _GPU = False
 
 _XGB_DEVICE = "cuda" if _GPU else "cpu"
-_LGB_DEVICE = "cuda" if _GPU else "cpu"
+_LGB_DEVICE = "cpu"
 
 
 def _optuna_callback(model_tag: str, n_trials: int, start_time: float):
