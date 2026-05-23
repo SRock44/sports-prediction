@@ -24,11 +24,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from sqlalchemy import or_
 
 from src.core.logging import get_logger
-from src.core.time import nba_season_for_date, as_of_for_game
+from src.core.time import as_of_for_game, nba_season_for_date
 from src.db.models import Game, MatchupFeature, PlayerGameStats, Sport
 from src.db.session import get_sync_session
 from src.features.nba.matchup import build_matchup_features
-from src.ingest.common import dict_hash
 
 log = get_logger(__name__)
 
@@ -61,7 +60,7 @@ def build_features_for_seasons(season_years: list[int], force: bool = False) -> 
                 Game.sport_id == sport.id,
                 Game.status == "final",
                 Game.season.in_(season_years),
-                or_(Game.meta["game_type"] == None, Game.meta["game_type"].astext != "PR"),
+                or_(Game.meta["game_type"] is None, Game.meta["game_type"].astext != "PR"),
                 Game.id.in_(
                     session.query(PlayerGameStats.game_id).distinct()
                 ),
@@ -194,7 +193,7 @@ def main() -> None:
     season_start = args.season_start if args.season_start else current_season - args.seasons + 1
     season_years = list(range(season_start, current_season + 1))
 
-    print(f"\nNBA Feature Builder")
+    print("\nNBA Feature Builder")
     print(f"Target seasons: {[f'{y}-{str(y+1)[-2:]}' for y in season_years]}")
     print(f"Force rebuild:  {args.force}")
 

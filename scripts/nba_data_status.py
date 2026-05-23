@@ -33,7 +33,7 @@ def main() -> None:
         n_teams = session.query(Team).filter_by(sport_id=sport.id).count()
         n_players = session.query(Player).filter_by(sport_id=sport.id).count()
 
-        print(f"\nNBA Database Status")
+        print("\nNBA Database Status")
         print(f"{'─'*65}")
         print(f"  Teams:   {n_teams}")
         print(f"  Players: {n_players}")

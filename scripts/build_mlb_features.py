@@ -8,17 +8,15 @@ Usage:
 """
 from __future__ import annotations
 
-import sys
 import argparse
+import sys
 import time
-from datetime import timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from sqlalchemy import text
 
-from src.core.time import utc_now, as_of_for_game
+from src.core.time import as_of_for_game, utc_now
 from src.db.models import Game, MatchupFeature, PlayerGameStats, Sport
 from src.db.session import get_sync_session
 from src.features.mlb.matchup import build_matchup_features

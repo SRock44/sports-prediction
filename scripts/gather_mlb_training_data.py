@@ -26,7 +26,7 @@ from src.ingest.mlb.players import sync_roster
 
 def _current_mlb_season() -> int:
     today = date.today()
-    # MLB season: April–October; treat Jan-Mar as still "last season" for default
+    # MLB season: April-October; treat Jan-Mar as still "last season" for default
     return today.year if today.month >= 4 else today.year - 1
 
 
@@ -55,7 +55,7 @@ def phase1_teams(session, seasons: list[int]) -> None:
             try:
                 sync_roster(session, team.external_id, season)
                 ok += 1
-            except Exception as e:
+            except Exception:
                 err += 1
         session.commit()
         print(f"done  ok={ok}  err={err}")
@@ -114,13 +114,13 @@ def phase3_box_scores(session, seasons: list[int]) -> None:
     start_time = time.monotonic()
 
     for i, game in enumerate(pending):
-        t0 = time.monotonic()
+
         try:
             result = ingest_box_score(session, game.external_id)
             session.commit()
             if result.errors:
                 errors += 1
-        except Exception as e:
+        except Exception:
             errors += 1
             session.rollback()
 
@@ -154,8 +154,8 @@ def main() -> None:
 
     print("MLB Training Data Gatherer")
     print(f"Target seasons: {seasons}")
-    print(f"Source:         statsapi.mlb.com (free, official endpoint)")
-    print(f"Rate limit:     ~0.3s between requests\n")
+    print("Source:         statsapi.mlb.com (free, official endpoint)")
+    print("Rate limit:     ~0.3s between requests\n")
 
     with get_sync_session() as session:
         if not args.box_scores_only:

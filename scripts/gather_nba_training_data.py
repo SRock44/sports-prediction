@@ -27,7 +27,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from datetime import date, datetime, timezone
+from datetime import date
 from pathlib import Path
 
 # Ensure project root is on PYTHONPATH when run directly
@@ -37,8 +37,8 @@ from src.core.logging import get_logger
 from src.core.time import nba_season_for_date
 from src.db.models import Game, PlayerGameStats, Sport
 from src.db.session import get_sync_session
-from src.ingest.nba.games import ingest_season_schedule, ingest_box_scores
-from src.ingest.nba.players import sync_teams, sync_players
+from src.ingest.nba.games import ingest_box_scores, ingest_season_schedule
+from src.ingest.nba.players import sync_players, sync_teams
 
 log = get_logger(__name__)
 
@@ -194,7 +194,7 @@ def phase_box_scores(season_years: list[int]) -> None:
         return
 
     # Estimate time
-    est_seconds = len(pending_ids) * 2 * 1.2  # 2 calls × ~1.2s each
+    est_seconds = len(pending_ids) * 2 * 1.2  # 2 calls x ~1.2s each
     print(f"  Estimated time: {_fmt_seconds(est_seconds)}")
     print()
 
@@ -313,10 +313,10 @@ def main() -> None:
 
     season_years = list(range(season_start, current_season + 1))
 
-    print(f"\nNBA Training Data Gatherer")
+    print("\nNBA Training Data Gatherer")
     print(f"Target seasons: {[f'{y}-{str(y+1)[-2:]}' for y in season_years]}")
-    print(f"Source:         stats.nba.com (free, unofficial endpoint)")
-    print(f"Rate limit:     1 req/sec (enforced)")
+    print("Source:         stats.nba.com (free, unofficial endpoint)")
+    print("Rate limit:     1 req/sec (enforced)")
     print()
 
     start = time.monotonic()
