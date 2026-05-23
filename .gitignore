@@ -38,3 +38,18 @@ pybaseball_cache/
 
 # Docker
 *.log
+
+# LaTeX build artifacts (only commit .tex and .pdf)
+*.aux
+*.out
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
+*.toc
+*.lof
+*.lot
+*.nav
+*.snm
+*.vrb
