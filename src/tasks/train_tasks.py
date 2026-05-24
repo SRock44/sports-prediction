@@ -10,9 +10,14 @@ from src.db.session import sync_session_factory
 log = get_logger(__name__)
 
 
-def train_challenger(sport: str, kind: str = "winner") -> dict:
-    """Nightly: retrain from scratch, log to MLflow as candidate."""
+def train_challenger(sport: str, kind: str = "winner", wide_search: bool = False) -> dict:
+    """Nightly: retrain on all completed games, use most-recent season as holdout.
 
+    wide_search=False (default) uses constrained HP bounds — prevents the Run-4
+    overfitting where Optuna found max_depth=10/n_estimators=4115 that looked
+    great on CV but regressed 0.022 log-loss on holdout.
+    wide_search=True is used by the monthly hyperparam_search only.
+    """
     from src.core.time import utc_now
     from src.models.train_winner import train_winner_model
 
@@ -22,17 +27,29 @@ def train_challenger(sport: str, kind: str = "winner") -> dict:
             log.warning("train.insufficient_data", sport=sport, n=len(df))
             return {"status": "skipped", "reason": "insufficient_data"}
 
+        # Use champion's feature list so challenger is always evaluated on same features
         feature_names = _get_feature_names(sport, kind)
-        holdout_df = df[df["scheduled_utc"] >= df["scheduled_utc"].quantile(0.9)].copy()
-        train_df = df[df["scheduled_utc"] < df["scheduled_utc"].quantile(0.9)].copy()
+
+        # Season-based split — same as CLI and champion evaluation.
+        # This ensures nightly challenger is compared on an identical holdout basis.
+        max_season = df["season"].max()
+        train_df = df[df["season"] < max_season].copy()
+        holdout_df = df[df["season"] == max_season].copy()
+
+        if train_df.empty or holdout_df.empty:
+            # Single-season fallback: last 15% by time
+            cutoff = int(len(df) * 0.85)
+            train_df = df.iloc[:cutoff].copy()
+            holdout_df = df.iloc[cutoff:].copy()
 
         run_id, metrics = train_winner_model(
             sport=sport,
             training_df=train_df,
             feature_names=feature_names,
             holdout_df=holdout_df,
-            n_optuna_trials=30,
+            n_optuna_trials=100,
             run_name=f"{sport}_{kind}_challenger_{utc_now().strftime('%Y%m%d')}",
+            wide_search=wide_search,
         )
 
     log.info("train.challenger_done", sport=sport, run_id=run_id, metrics=metrics)
@@ -203,8 +220,8 @@ def generate_backtest_report(sport: str) -> dict:
 
 
 def hyperparam_search(sport: str) -> dict:
-    """Monthly: full Optuna search with 50 trials + walk-forward objective."""
-    return train_challenger(sport, kind="winner")  # same pipeline, more trials via env var
+    """Monthly: full Optuna search with wide bounds — the only place wide_search=True is used."""
+    return train_challenger(sport, kind="winner", wide_search=True)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

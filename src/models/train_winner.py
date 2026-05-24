@@ -163,6 +163,7 @@ def train_winner_model(
     holdout_df: pd.DataFrame,
     n_optuna_trials: int = 500,
     run_name: str | None = None,
+    wide_search: bool = False,
 ) -> tuple[str, dict[str, float]]:
     """Train calibrated ensemble model. Returns (mlflow_run_id, metrics_dict)."""
     lam = _LAMBDA.get(sport, 0.25)
@@ -223,11 +224,18 @@ def train_winner_model(
     print(f"{'=' * 65}\n")
 
     # ── XGBoost Optuna search ─────────────────────────────────────────────────
+    # Constrained bounds (default) prevent the Run-4 failure where Optuna found
+    # max_depth=10 / n_estimators=4115 that overfit CV but collapsed on holdout.
+    # wide_search=True is reserved for monthly deep-exploration runs only.
+    _xgb_n_est_hi = 5000 if wide_search else 2000
+    _xgb_depth_hi = 10 if wide_search else 8
+    _xgb_lr_lo = 0.001 if wide_search else 0.005
+
     def xgb_objective(trial: optuna.Trial) -> float:
         params = {
-            "n_estimators": trial.suggest_int("n_estimators", 100, 5000),
-            "max_depth": trial.suggest_int("max_depth", 3, 10),
-            "learning_rate": trial.suggest_float("learning_rate", 0.001, 0.2, log=True),
+            "n_estimators": trial.suggest_int("n_estimators", 100, _xgb_n_est_hi),
+            "max_depth": trial.suggest_int("max_depth", 3, _xgb_depth_hi),
+            "learning_rate": trial.suggest_float("learning_rate", _xgb_lr_lo, 0.3, log=True),
             "subsample": trial.suggest_float("subsample", 0.4, 1.0),
             "colsample_bytree": trial.suggest_float("colsample_bytree", 0.3, 1.0),
             "colsample_bylevel": trial.suggest_float("colsample_bylevel", 0.3, 1.0),
@@ -340,12 +348,14 @@ def train_winner_model(
     best_lgb_params: dict = {}
 
     if _HAS_LGB:
+        _lgb_leaves_hi = 200 if wide_search else 80
+        _lgb_n_est_hi = 3000 if wide_search else 1500
 
         def lgb_objective(trial: optuna.Trial) -> float:
             params = {
-                "num_leaves": trial.suggest_int("num_leaves", 20, 200),
+                "num_leaves": trial.suggest_int("num_leaves", 20, _lgb_leaves_hi),
                 "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.15, log=True),
-                "n_estimators": trial.suggest_int("n_estimators", 200, 3000),
+                "n_estimators": trial.suggest_int("n_estimators", 200, _lgb_n_est_hi),
                 "subsample": trial.suggest_float("subsample", 0.5, 1.0),
                 "colsample_bytree": trial.suggest_float("colsample_bytree", 0.4, 1.0),
                 "min_child_samples": trial.suggest_int("min_child_samples", 5, 60),
