@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import re
+from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -15,6 +16,7 @@ from src.ingest.nba.client import (
     get_box_score_advanced,
     get_box_score_traditional,
     get_league_game_finder,
+    get_scoreboard_for_date,
     nba_season_str,
 )
 
@@ -141,6 +143,102 @@ def _resolve_team(session: Session, sport: Sport, row: dict[str, Any]) -> Team |
         session.add(team)
         session.flush()
     return team
+
+
+_EDT = timezone(timedelta(hours=-4))  # playoffs run in EDT
+
+
+def _parse_tip_off_utc(game_date: date, status_text: str) -> datetime:
+    """Parse '8:00 pm ET' + date into UTC. Falls back to 17:00 UTC (noon ET)."""
+    m = re.match(r"(\d+):(\d+)\s*(am|pm)\s*ET", status_text.strip(), re.IGNORECASE)
+    if m:
+        hour, minute, ampm = int(m.group(1)), int(m.group(2)), m.group(3).lower()
+        if ampm == "pm" and hour != 12:
+            hour += 12
+        elif ampm == "am" and hour == 12:
+            hour = 0
+        local = datetime(game_date.year, game_date.month, game_date.day, hour, minute, tzinfo=_EDT)
+        return local.astimezone(UTC)
+    return datetime(game_date.year, game_date.month, game_date.day, 17, 0, tzinfo=UTC)
+
+
+def _resolve_team_by_id(session: Session, sport: Sport, team_id: int) -> Team | None:
+    """Look up a Team by numeric NBA team ID."""
+    return session.query(Team).filter_by(sport_id=sport.id, external_id=str(team_id)).first()
+
+
+def ingest_upcoming_nba_schedule(session: Session, days_ahead: int = 7) -> IngestResult:
+    """Upsert upcoming NBA games for the next N days using ScoreboardV2."""
+    from src.core.time import nba_season_for_date
+
+    result = IngestResult()
+    sport = _get_or_create_sport(session)
+    today = date.today()
+
+    for i in range(days_ahead):
+        d = today + timedelta(days=i)
+        date_str = d.strftime("%m/%d/%Y")
+        try:
+            rows = get_scoreboard_for_date(date_str)
+        except Exception as exc:
+            log.warning("nba.upcoming.fetch_failed", date=date_str, error=str(exc))
+            continue
+
+        for row in rows:
+            game_id_ext = str(row.get("GAME_ID", ""))
+            if not game_id_ext:
+                continue
+
+            home_team = _resolve_team_by_id(session, sport, row.get("HOME_TEAM_ID", 0))
+            away_team = _resolve_team_by_id(session, sport, row.get("VISITOR_TEAM_ID", 0))
+            if home_team is None or away_team is None:
+                log.warning(
+                    "nba.upcoming.team_not_found",
+                    game_id=game_id_ext,
+                    home_id=row.get("HOME_TEAM_ID"),
+                    away_id=row.get("VISITOR_TEAM_ID"),
+                )
+                continue
+
+            status_id = int(row.get("GAME_STATUS_ID", 1))
+            status_text = str(row.get("GAME_STATUS_TEXT", ""))
+            if status_id == 3:
+                status = "final"
+            elif status_id == 2:
+                status = "in_progress"
+            else:
+                status = "scheduled"
+
+            scheduled_utc = _parse_tip_off_utc(d, status_text)
+            season_year = nba_season_for_date(d)
+
+            existing = (
+                session.query(Game).filter_by(sport_id=sport.id, external_id=game_id_ext).first()
+            )
+            if existing is None:
+                session.add(
+                    Game(
+                        sport_id=sport.id,
+                        external_id=game_id_ext,
+                        season=season_year,
+                        scheduled_utc=scheduled_utc,
+                        status=status,
+                        home_team_id=home_team.id,
+                        away_team_id=away_team.id,
+                    )
+                )
+                result.rows_inserted += 1
+            else:
+                # Always update status; only update time if game hasn't started
+                existing.status = status
+                if status == "scheduled":
+                    existing.scheduled_utc = scheduled_utc
+                result.rows_updated += 1
+
+        session.flush()
+        log.info("nba.upcoming.date_done", date=date_str, rows=len(rows))
+
+    return result
 
 
 def ingest_box_scores(session: Session, game_ext_id: str) -> IngestResult:

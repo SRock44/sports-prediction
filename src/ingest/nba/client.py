@@ -127,6 +127,26 @@ def get_live_scoreboard() -> dict[str, Any]:
     return sb.get_dict()  # type: ignore[no-any-return]
 
 
+@retry(
+    retry=retry_if_exception_type(requests.exceptions.RequestException),
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=1, min=2, max=30),
+    reraise=True,
+)
+def get_scoreboard_for_date(game_date: str) -> list[dict[str, Any]]:
+    """Fetch game headers for a specific date.
+
+    game_date: 'MM/DD/YYYY' format (NBA API convention).
+    Returns list of GameHeader row dicts (one per game).
+    """
+    _sleep()
+    from nba_api.stats.endpoints import ScoreboardV2
+
+    sb = ScoreboardV2(game_date=game_date, league_id="00", day_offset=0)
+    df = sb.get_data_frames()[0]  # index 0 = GameHeader
+    return df.to_dict(orient="records")  # type: ignore[no-any-return]
+
+
 def nba_season_str(year: int) -> str:
     """Convert 2024 → '2024-25' (NBA API format)."""
     return f"{year}-{str(year + 1)[-2:]}"

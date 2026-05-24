@@ -85,9 +85,9 @@ def ingest_season_schedule(session: Session, season: int) -> IngestResult:
     result = IngestResult()
     sport = _get_or_create_sport(session)
 
-    # MLB season: March-April opener through October (up to today)
+    # MLB season: March-April opener through October
     season_start = date(season, 3, 1)
-    season_end = min(date(season, 11, 1), date.today())
+    season_end = date(season, 11, 1)
 
     chunk_start = season_start
     while chunk_start < season_end:
