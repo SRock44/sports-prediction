@@ -230,7 +230,7 @@ def _resolve_parlay_legs(game_id: int, actual_winner: str, correct: bool) -> Non
 
 
 def _get_season_record(sport: str) -> str:
-    """Compute season win/loss record for this sport's active model."""
+    """Compute season win/loss record across all model predictions."""
     try:
         with sync_session_factory() as session:
             from sqlalchemy import text
@@ -246,11 +246,9 @@ def _get_season_record(sport: str) -> str:
                     FROM predictions p
                     JOIN games g ON g.id = p.game_id
                     JOIN sports sp ON sp.id = g.sport_id
-                    JOIN models m ON m.id = p.model_id
                     WHERE sp.code = :sport
                       AND g.status = 'final'
                       AND p.target = 'home_won'
-                      AND m.active = true
                       AND g.scheduled_utc > NOW() - INTERVAL '180 days'
                 """),
                 {"sport": sport},

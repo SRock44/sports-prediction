@@ -72,9 +72,14 @@ def evaluate_and_promote(sport: str, kind: str = "winner") -> dict:
     mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
     client = mlflow.MlflowClient()
 
-    # Find all challenger runs from the past 7 days
+    # Resolve experiment ID by name — runs are logged under settings.mlflow_experiment_name
+    experiment = client.get_experiment_by_name(settings.mlflow_experiment_name)
+    if experiment is None:
+        return {"status": "no_challengers"}
+    exp_ids = [experiment.experiment_id]
+
     runs = client.search_runs(
-        experiment_ids=["0"],  # default experiment
+        experiment_ids=exp_ids,
         filter_string=f"tags.sport = '{sport}' AND tags.kind = '{kind}' AND status = 'FINISHED'",
         order_by=["metrics.logloss ASC"],
         max_results=7,
@@ -342,11 +347,9 @@ def _get_calibration_stats(sport: str) -> str:
                     FROM predictions p
                     JOIN games g ON g.id = p.game_id
                     JOIN sports sp ON sp.id = g.sport_id
-                    JOIN models m ON m.id = p.model_id
                     WHERE sp.code = :sport
                       AND g.status = 'final'
                       AND p.target = 'home_won'
-                      AND m.active = true
                       AND g.home_score IS NOT NULL
                       AND g.scheduled_utc > NOW() - INTERVAL '180 days'
                 """),
@@ -412,8 +415,10 @@ def retrain_champion(sport: str, kind: str = "winner") -> dict:
         # Pull the champion's exact hyperparameters from MLflow by searching for its run
         fixed_params = None
         try:
+            _exp = client.get_experiment_by_name(settings.mlflow_experiment_name)
+            _exp_ids = [_exp.experiment_id] if _exp else ["0"]
             runs = client.search_runs(
-                experiment_ids=["0"],
+                experiment_ids=_exp_ids,
                 filter_string=(
                     f"tags.sport = '{sport}' AND tags.kind = '{kind}' AND status = 'FINISHED'"
                 ),
