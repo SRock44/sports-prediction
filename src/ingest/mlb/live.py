@@ -37,7 +37,17 @@ def update_live_scores(session: Session) -> dict[str, Any]:
             Game.scheduled_utc >= window_start,
             Game.scheduled_utc <= window_end,
             or_(
-                Game.status.in_(["scheduled", "pre-game", "in_progress", "in progress", "warmup", "delayed", "delayed start"]),
+                Game.status.in_(
+                    [
+                        "scheduled",
+                        "pre-game",
+                        "in_progress",
+                        "in progress",
+                        "warmup",
+                        "delayed",
+                        "delayed start",
+                    ]
+                ),
                 Game.status.like("in_progress_%"),
             ),
         )
