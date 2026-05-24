@@ -118,8 +118,11 @@ def build_kirkova_embed(nba_legs: list[ParlayLeg], mlb_legs: list[ParlayLeg]) ->
             opp_team = leg.away_team if leg.pick == "home" else leg.home_team
             odds_str = f"+{leg.odds_american}" if leg.odds_american > 0 else str(leg.odds_american)
             bar = _prob_bar(leg.model_prob, width=8)
-            lines.append(f"✅ **{pick_team}** ({odds_str}) vs {opp_team}")
-            lines.append(f"`{bar}` {leg.model_prob:.0%}  ·  edge **{leg.edge:+.1%}**")
+            conf = "🟢" if leg.model_prob >= 0.65 else "🟡" if leg.model_prob >= 0.58 else "⚪"
+            lines.append(f"{conf} **{pick_team}** to win vs {opp_team}")
+            lines.append(
+                f"`{bar}` {leg.model_prob:.0%}  ·  {odds_str}  ·  edge **{leg.edge:+.1%}**"
+            )
         lines.append("")
 
     if nba_legs:

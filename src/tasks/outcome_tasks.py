@@ -88,7 +88,7 @@ def check_outcomes(sport: str) -> dict[str, Any]:
                     g.away_score,
                     g.scheduled_utc,
                     ht.name       AS home_team,
-                    at.name       AS away_team,
+                    at_t.name     AS away_team,
                     sp.code       AS sport_code
                 FROM predictions p
                 JOIN games g       ON g.id = p.game_id
@@ -316,10 +316,10 @@ def post_daily_picks(sport: str) -> dict[str, Any]:
             if hasattr(leg.scheduled_utc, "strftime")
             else ""
         )
+        conf_bar = "🟢" if leg.model_prob >= 0.65 else "🟡" if leg.model_prob >= 0.58 else "⚪"
         lines.append(
-            f"**{i}.** {pick_team} vs {opp_team}  "
-            f"·  {odds_str}  ·  Model: **{leg.model_prob:.0%}**  "
-            f"·  Edge: **{leg.edge:+.1%}**  ·  _{game_time}_"
+            f"**{i}.** {conf_bar} **{pick_team}** to win vs {opp_team}  ·  _{game_time}_\n"
+            f"   {odds_str}  ·  Model: **{leg.model_prob:.0%}**  ·  Edge: **{leg.edge:+.1%}**"
         )
 
     lines += [
@@ -350,14 +350,19 @@ def post_daily_picks(sport: str) -> dict[str, Any]:
 
 from src.tasks.celery_app import app  # noqa: E402
 
-check_outcomes_nba = app.task(name="src.tasks.outcome_tasks.check_outcomes_nba", bind=False)(
-    lambda: check_outcomes("nba")
-)
+_post_daily_picks_fn = post_daily_picks
 
-check_outcomes_mlb = app.task(name="src.tasks.outcome_tasks.check_outcomes_mlb", bind=False)(
-    lambda: check_outcomes("mlb")
-)
 
-post_daily_picks = app.task(name="src.tasks.outcome_tasks.post_daily_picks", bind=False)(
-    post_daily_picks
-)
+@app.task(name="src.tasks.outcome_tasks.check_outcomes_nba", bind=False)
+def check_outcomes_nba() -> dict:
+    return check_outcomes("nba")
+
+
+@app.task(name="src.tasks.outcome_tasks.check_outcomes_mlb", bind=False)
+def check_outcomes_mlb() -> dict:
+    return check_outcomes("mlb")
+
+
+@app.task(name="src.tasks.outcome_tasks.post_daily_picks", bind=False)
+def post_daily_picks(sport: str) -> dict:  # type: ignore[misc]
+    return _post_daily_picks_fn(sport)
