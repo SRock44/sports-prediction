@@ -225,6 +225,32 @@ async def training_log(interaction: discord.Interaction) -> None:
 
 
 @bot.tree.command(
+    name="enzo",
+    description="Objective model predictions for every game — who wins and why (no odds/betting)",
+)
+async def enzo(interaction: discord.Interaction) -> None:
+    await interaction.response.defer()
+
+    from src.db.session import get_sync_session
+    from src.notify.enzo import build_enzo_embeds, fetch_enzo_games
+
+    try:
+        with get_sync_session() as session:
+            games = fetch_enzo_games(session)
+        embeds = build_enzo_embeds(games)
+    except Exception as exc:
+        log.error("discord.enzo_failed", error=str(exc))
+        await interaction.followup.send("⚠️ Error loading predictions.", ephemeral=True)
+        return
+
+    # Send first embed as the initial followup, rest as additional messages
+    first, *rest = embeds
+    await interaction.followup.send(embed=discord.Embed.from_dict(first))
+    for embed_dict in rest:
+        await interaction.followup.send(embed=discord.Embed.from_dict(embed_dict))
+
+
+@bot.tree.command(
     name="record",
     description="Show today's model prediction win/loss record",
 )
