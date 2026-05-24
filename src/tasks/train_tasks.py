@@ -53,6 +53,11 @@ def train_challenger(sport: str, kind: str = "winner", wide_search: bool = False
         )
 
     log.info("train.challenger_done", sport=sport, run_id=run_id, metrics=metrics)
+    _append_training_log(sport, "Challenger Train", run_id, metrics)
+    _notify_ops(
+        f"🤖 {sport.upper()} challenger trained. "
+        f"LogLoss: {metrics.get('logloss', '?'):.4f}  Acc: {metrics.get('accuracy', 0):.1%}"
+    )
     return {"run_id": run_id, "metrics": metrics}
 
 
@@ -119,8 +124,16 @@ def evaluate_and_promote(sport: str, kind: str = "winner") -> dict:
                 feature_spec_hash=fs_hash,
             )
             session.commit()
+            _append_training_log(
+                sport,
+                "Challenger Promoted ✅",
+                best_run.info.run_id,
+                challenger_metrics,
+                notes=f"Beat champion. Champion was {champion_metrics.get('logloss', '?'):.4f}, challenger {challenger_metrics.get('logloss', '?'):.4f}",
+            )
             _notify_ops(
-                f"✅ {sport.upper()} {kind} model promoted. LogLoss: {challenger_metrics.get('logloss', '?'):.4f}"
+                f"✅ {sport.upper()} {kind} model promoted. "
+                f"LogLoss: {champion_metrics.get('logloss', '?'):.4f} → {challenger_metrics.get('logloss', '?'):.4f}"
             )
 
         elif champion and len(runs) >= 3:
@@ -258,6 +271,87 @@ def _get_feature_names(sport: str, kind: str) -> list[str]:
     return MLB_WINNER_FEATURES
 
 
+def _append_training_log(
+    sport: str,
+    run_type: str,
+    run_id: str,
+    metrics: dict,
+    params: dict | None = None,
+    notes: str = "",
+) -> None:
+    """Append a structured entry to /app/reports/training_log.md (persists in Docker volume)."""
+    import os
+    from datetime import UTC, datetime
+
+    os.makedirs("/app/reports", exist_ok=True)
+    log_path = "/app/reports/training_log.md"
+
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    ll = metrics.get("logloss", "?")
+    acc = metrics.get("accuracy", 0)
+    brier = metrics.get("brier", "?")
+    ece = metrics.get("ece", "?")
+
+    lines = [
+        f"\n## {run_type} — {sport.upper()}",
+        f"**Date:** {now}  |  **Run ID:** `{run_id[:8]}`",
+        "",
+        "| Metric   | Value  |",
+        "|----------|--------|",
+        f"| Log-loss | {ll:.4f} |" if isinstance(ll, float) else f"| Log-loss | {ll} |",
+        f"| Accuracy | {acc:.2%} |" if isinstance(acc, float) else f"| Accuracy | {acc} |",
+        f"| Brier    | {brier:.4f} |" if isinstance(brier, float) else f"| Brier    | {brier} |",
+        f"| ECE      | {ece:.4f} |" if isinstance(ece, float) else f"| ECE      | {ece} |",
+    ]
+    if params:
+        xgb = {k[4:]: v for k, v in params.items() if k.startswith("xgb_")}
+        lgb = {k[4:]: v for k, v in params.items() if k.startswith("lgb_")}
+        if xgb:
+            lines += ["", f"**XGB params:** `{xgb}`"]
+        if lgb:
+            lines += [f"**LGB params:** `{lgb}`"]
+    if notes:
+        lines += ["", f"**Notes:** {notes}"]
+    lines.append("\n---")
+
+    with open(log_path, "a") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def _get_calibration_stats(sport: str) -> str:
+    """Compute live log-loss on the active model's recent predictions."""
+    try:
+        from sklearn.metrics import log_loss
+        from sqlalchemy import text
+
+        with sync_session_factory() as session:
+            rows = session.execute(
+                text("""
+                    SELECT p.probability, g.home_score, g.away_score
+                    FROM predictions p
+                    JOIN games g ON g.id = p.game_id
+                    JOIN sports sp ON sp.id = g.sport_id
+                    JOIN models m ON m.id = p.model_id
+                    WHERE sp.code = :sport
+                      AND g.status = 'final'
+                      AND p.target = 'home_won'
+                      AND m.active = true
+                      AND g.home_score IS NOT NULL
+                      AND g.scheduled_utc > NOW() - INTERVAL '180 days'
+                """),
+                {"sport": sport},
+            ).fetchall()
+
+        if not rows:
+            return "n/a"
+        probs = [float(r.probability) for r in rows]
+        labels = [1 if r.home_score > r.away_score else 0 for r in rows]
+        ll = log_loss(labels, probs)
+        return f"{ll:.4f} (n={len(rows)})"
+    except Exception:
+        return "n/a"
+
+
 def _notify_ops(message: str) -> None:
     from src.core.config import settings
 
@@ -268,6 +362,144 @@ def _notify_ops(message: str) -> None:
 
         with contextlib.suppress(Exception):
             httpx.post(settings.discord_webhook_ops, json={"content": message}, timeout=5)
+
+
+def retrain_champion(sport: str, kind: str = "winner") -> dict:
+    """Retrain the current champion using its exact hyperparameters on all new data.
+
+    Same architecture, same feature set, fresh training data through yesterday.
+    Auto-promotes if holdout logloss doesn't degrade by more than 0.005.
+    This keeps the champion current without waiting for a weekly challenger gate.
+    """
+    import mlflow
+
+    from src.core.config import settings
+    from src.core.time import utc_now
+    from src.models.registry import promote_model
+    from src.models.train_winner import train_winner_model
+
+    mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
+    client = mlflow.MlflowClient()
+
+    with sync_session_factory() as session:
+        from src.db.models import ModelRecord
+        from src.db.models import Sport as SportModel
+
+        sport_obj = session.query(SportModel).filter_by(code=sport).first()
+        if sport_obj is None:
+            return {"status": "sport_not_found"}
+
+        champion = (
+            session.query(ModelRecord)
+            .filter_by(sport_id=sport_obj.id, kind=kind, target="home_won", active=True)
+            .first()
+        )
+        if champion is None:
+            log.warning("retrain_champion.no_champion", sport=sport)
+            return {"status": "no_champion"}
+
+        # Pull the champion's exact hyperparameters from MLflow by searching for its run
+        fixed_params = None
+        try:
+            runs = client.search_runs(
+                experiment_ids=["0"],
+                filter_string=(
+                    f"tags.sport = '{sport}' AND tags.kind = '{kind}' AND status = 'FINISHED'"
+                ),
+                order_by=["metrics.logloss ASC"],
+                max_results=50,
+            )
+            # Match the run whose ID starts with champion.version (8-char prefix)
+            for r in runs:
+                if r.info.run_id.startswith(champion.version):
+                    fixed_params = dict(r.data.params)
+                    break
+        except Exception as exc:
+            log.warning("retrain_champion.mlflow_lookup_failed", sport=sport, error=str(exc))
+
+        champion_logloss = (champion.metrics or {}).get("logloss", 999.0)
+
+    with sync_session_factory() as _load_session:
+        df = _load_training_df(_load_session, sport)
+    if len(df) < 100:
+        return {"status": "skipped", "reason": "insufficient_data"}
+
+    feature_names = _get_feature_names(sport, kind)
+    max_season = df["season"].max()
+    train_df = df[df["season"] < max_season].copy()
+    holdout_df = df[df["season"] == max_season].copy()
+    if train_df.empty or holdout_df.empty:
+        cutoff = int(len(df) * 0.85)
+        train_df = df.iloc[:cutoff].copy()
+        holdout_df = df.iloc[cutoff:].copy()
+
+    run_id, metrics = train_winner_model(
+        sport=sport,
+        training_df=train_df,
+        feature_names=feature_names,
+        holdout_df=holdout_df,
+        n_optuna_trials=0,
+        fixed_params=fixed_params,
+        run_name=f"{sport}_{kind}_champion_refresh_{utc_now().strftime('%Y%m%d')}",
+    )
+
+    new_logloss = metrics.get("logloss", 999.0)
+    degraded = new_logloss > champion_logloss + 0.005
+
+    if degraded:
+        log.warning(
+            "retrain_champion.degraded",
+            sport=sport,
+            new_logloss=new_logloss,
+            champion_logloss=champion_logloss,
+        )
+        _append_training_log(
+            sport,
+            "Champion Refresh ⚠️ (degraded — not promoted)",
+            run_id,
+            metrics,
+            notes=f"Degraded: {champion_logloss:.4f} → {new_logloss:.4f}. Kept existing champion.",
+        )
+        _notify_ops(
+            f"⚠️ {sport.upper()} champion refresh degraded "
+            f"({new_logloss:.4f} vs {champion_logloss:.4f}) — keeping current champion."
+        )
+        return {
+            "status": "degraded",
+            "new_logloss": new_logloss,
+            "champion_logloss": champion_logloss,
+        }
+
+    with sync_session_factory() as session:
+        from src.features.common import feature_spec_hash
+
+        sport_obj = session.query(SportModel).filter_by(code=sport).first()
+        fs_hash = feature_spec_hash(feature_names)
+        promote_model(
+            session=session,
+            run_id=run_id,
+            sport_id=sport_obj.id,
+            kind=kind,
+            target="home_won",
+            version=run_id[:8],
+            metrics=metrics,
+            feature_spec_hash=fs_hash,
+        )
+        session.commit()
+
+    log.info("retrain_champion.promoted", sport=sport, logloss=new_logloss)
+    _append_training_log(
+        sport,
+        "Champion Refresh ✅ (promoted)",
+        run_id,
+        metrics,
+        notes=f"Same params, fresh data. LogLoss: {champion_logloss:.4f} → {new_logloss:.4f}",
+    )
+    _notify_ops(
+        f"🔄 {sport.upper()} champion refreshed with new data. "
+        f"LogLoss: {champion_logloss:.4f} → {new_logloss:.4f}"
+    )
+    return {"status": "promoted", "new_logloss": new_logloss, "run_id": run_id}
 
 
 # Register as Celery tasks
@@ -287,4 +519,7 @@ generate_backtest_report = app.task(
 )(generate_backtest_report)
 hyperparam_search = app.task(name="src.tasks.train_tasks.hyperparam_search", bind=False)(
     hyperparam_search
+)
+retrain_champion = app.task(name="src.tasks.train_tasks.retrain_champion", bind=False)(
+    retrain_champion
 )

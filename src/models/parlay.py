@@ -195,7 +195,7 @@ def _fetch_candidate_legs(
                 .order_by(GameOdds.fetched_at.desc())
                 .first()
             )
-        if odds_row is None:
+        if odds_row is None or odds_row.home_price is None or odds_row.away_price is None:
             continue
 
         home_odds = int(odds_row.home_price)
@@ -340,7 +340,7 @@ def fetch_all_picks(
                 .order_by(GameOdds.fetched_at.desc())
                 .first()
             )
-        if odds_row is None:
+        if odds_row is None or odds_row.home_price is None or odds_row.away_price is None:
             continue
 
         home_odds = int(odds_row.home_price)

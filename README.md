@@ -1,6 +1,6 @@
 # prediction
 
-A production-grade sports match prediction system for **NBA** and **MLB**. Trains its own ML models on free official data, serves predictions through a secure REST API, and pushes rich notifications to Discord and Telegram.
+A production-grade sports match prediction system for **NBA** and **MLB**. Trains its own ML models on free official data, serves predictions through a secure REST API, and delivers them through Discord (interactive bot + webhooks) and Telegram.
 
 No paid data feeds. No LLM inference. Fully self-hosted.
 
@@ -11,7 +11,8 @@ No paid data feeds. No LLM inference. Fully self-hosted.
 - **Ingests** schedules, box scores, play-by-play, rosters, and injury reports from `stats.nba.com` and `statsapi.mlb.com` — both free, official sources
 - **Trains** XGBoost game-winner models and LightGBM player-prop models on up to 5 seasons of history
 - **Scores** upcoming games automatically each day; re-scores when confirmed lineups arrive
-- **Publishes** predictions via Discord webhook embeds and Telegram bot messages
+- **Publishes** predictions via Discord webhooks (daily top-10 picks, live outcome posts) and Telegram
+- **Interactive Discord bot** — `/predict` slash command lets users build custom parlays, lock picks, and track outcomes; SHAP-style feature contributions stored per prediction for post-game "got it right" posts
 - **Retrains nightly** with a champion/challenger gate — fresh data in, regressions blocked out
 - **Detects drift** in model performance and feature distributions; triggers emergency retrains when needed
 - **Exposes** a JWT-authenticated REST API with per-key rate limiting, Argon2-hashed keys, and a full audit log
@@ -45,11 +46,12 @@ Celery Workers (Redis broker)
                                                     ↑
                                            Caddy (auto-HTTPS, HSTS)
                                                     ↑
-                                           Discord / Telegram notifier
-                                           (PG LISTEN on predictions)
+                                      Discord webhook notifier  (PG LISTEN)
+                                      Discord interactive bot   (slash commands)
+                                      Telegram notifier         (PG LISTEN)
 ```
 
-All services run in Docker Compose. Same image serves API, worker, beat scheduler, and notifier.
+All services run in Docker Compose. Same image serves API, worker, beat scheduler, notifier, and Discord bot.
 
 ---
 
@@ -65,12 +67,12 @@ All services run in Docker Compose. Same image serves API, worker, beat schedule
 | ORM / migrations | SQLAlchemy 2 + Alembic |
 | ML — winner | XGBoost + isotonic calibration |
 | ML — props | LightGBM quantile regression |
-| Hyperparameter search | Optuna (50 trials, walk-forward objective) |
+| Hyperparameter search | Optuna (100 trials nightly; wide bounds monthly) |
 | Model registry | MLflow (local file backend) |
 | Auth | Argon2id API keys → JWT HS256 (15 min TTL) |
 | Rate limiting | slowapi + Redis sliding window |
 | Reverse proxy | Caddy (auto Let's Encrypt, TLS 1.3) |
-| Notifications | Discord webhooks + Telegram Bot API |
+| Notifications | Discord webhooks + interactive bot (discord.py) + Telegram Bot API |
 
 ---
 
@@ -79,7 +81,7 @@ All services run in Docker Compose. Same image serves API, worker, beat schedule
 ### Prerequisites
 
 - Docker + Docker Compose
-- A Discord webhook URL and/or Telegram bot token (optional but recommended)
+- Discord webhook URLs and/or bot token (optional but recommended) — see [Environment variables](#environment-variables)
 
 ### 1. Clone and configure
 
@@ -92,10 +94,16 @@ cp .env.example .env
 Edit `.env` and fill in at minimum:
 
 ```env
-SECRET_KEY=<64-char random hex>           # openssl rand -hex 32
+SECRET_KEY=<64-char random hex>             # openssl rand -hex 32
 POSTGRES_PASSWORD=<strong password>
+
+# Webhook-only (proactive posts, no bot required)
 DISCORD_WEBHOOK_NBA=https://discord.com/api/webhooks/...
 DISCORD_WEBHOOK_MLB=https://discord.com/api/webhooks/...
+
+# Interactive bot (optional — enables /predict slash commands)
+# DISCORD_BOT_TOKEN=<your bot token>
+# DISCORD_GUILD_ID=<your server ID>        # omit for global slash-command sync
 ```
 
 ### 2. Start services
@@ -206,6 +214,9 @@ All jobs run automatically via Celery beat once the system is running.
 | 11:00 daily | `refresh_injuries` | NBA injury PDF + MLB IL transactions |
 | 12:00 daily | `rebuild_features` | Matchup features for upcoming 48h games |
 | 13:00 daily | `score_upcoming` | Inference → predictions → Discord/Telegram |
+| 14:00 daily | `post_daily_picks` (NBA) | Post top-10 model picks to Discord |
+| 14:30 daily | `post_daily_picks` (MLB) | Post top-10 model picks to Discord |
+| Every 5 min, 18:00–05:00 UTC | `check_outcomes` | Mark wins/losses, post results to Discord |
 | Every 15 min | `rescore_lineup_change` | Re-score when confirmed lineups arrive |
 | Every 2 min (in-window) | `poll_live` | Live score updates during active games |
 | 02:00 daily | `train_challenger` | Full retrain from scratch, log to MLflow |
@@ -224,7 +235,7 @@ The model stays fresh without forgetting old data through three mechanisms:
 
 2. **Recency sample weighting** — `weight = exp(-λ × days_since_game / 365)`. Recent games dominate the loss function. λ is tuned per sport and target during walk-forward CV.
 
-3. **Nightly challenger + weekly promotion gate** — every night a new model is trained from scratch and logged as a challenger. Every Monday the best challenger from the past week is compared to the current champion. Promotion requires all four gates to pass:
+3. **Nightly challenger + weekly promotion gate** — every night a new model is trained from scratch and logged as a challenger. The holdout set is always the most recent complete season, matching the basis used to evaluate the current champion. Every Monday the best challenger from the past week is compared to the current champion. Promotion requires all four gates to pass:
    - Log-loss improvement ≥ 1%
    - Expected Calibration Error ≤ champion ECE + 0.02
    - No feature importance shift > 50%
@@ -271,7 +282,10 @@ prediction/
 ├── pyproject.toml
 ├── .env.example
 ├── alembic/
-│   └── versions/0001_initial_schema.py
+│   └── versions/
+│       ├── 0001_initial_schema.py
+│       ├── 0002_add_odds_weather.py
+│       └── 0003_add_discord_parlays.py
 ├── scripts/
 │   ├── bootstrap_backfill.sh
 │   └── init_db.sql
@@ -289,12 +303,17 @@ prediction/
 │   ├── models/
 │   │   ├── train_winner.py           # XGBoost + isotonic calibration
 │   │   ├── train_props.py            # LightGBM quantile regression
-│   │   ├── score.py                  # Inference + pg_notify
+│   │   ├── score.py                  # Inference + SHAP contribs + pg_notify
+│   │   ├── parlay.py                 # Parlay leg scoring and selection
 │   │   ├── registry.py               # MLflow wrapper, promotion, rollback
 │   │   └── eval/                     # Walk-forward CV, metrics, reports
 │   ├── api/                          # FastAPI app, auth, routes, schemas
 │   ├── tasks/                        # Celery tasks + beat schedule
-│   └── notify/                       # Discord, Telegram, PG LISTEN loop
+│   └── notify/
+│       ├── discord_bot.py            # Interactive bot — /predict slash commands
+│       ├── discord_embeds.py         # Embed builders for picks and parlays
+│       ├── discord_views.py          # Button/select UI components
+│       └── listener.py              # Webhook notifier (PG LISTEN loop)
 └── tests/
     ├── unit/                         # Feature math, security, dedup, time
     └── integration/                  # Feature parity, leakage, auth flow
@@ -334,6 +353,8 @@ Optional:
 
 | Variable | Description |
 |---|---|
+| `DISCORD_BOT_TOKEN` | Discord bot token — enables `/predict` slash commands |
+| `DISCORD_GUILD_ID` | Guild ID for instant slash-command sync; global sync if unset |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token |
 | `TELEGRAM_CHAT_ID_NBA` | Telegram chat ID for NBA |
 | `TELEGRAM_CHAT_ID_MLB` | Telegram chat ID for MLB |

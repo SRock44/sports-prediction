@@ -122,6 +122,11 @@ ignore_missing_imports = true
 module = ["src.tasks.*", "src.models.train_winner", "src.models.train_props"]
 ignore_errors = true
 
+[[tool.mypy.overrides]]
+# discord.py stubs are incomplete (Select/Button type args, ui.callback assignment)
+module = ["src.notify.*", "src.models.parlay"]
+ignore_errors = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

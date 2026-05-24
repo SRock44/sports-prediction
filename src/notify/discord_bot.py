@@ -21,7 +21,7 @@ from discord import app_commands
 
 from src.core.config import settings
 from src.core.logging import get_logger
-from src.notify.discord_views import KirkovaView, SportSelectView
+from src.notify.discord_views import ConfirmParlayView, KirkovaView, SportSelectView
 
 log = get_logger(__name__)
 
@@ -39,19 +39,23 @@ class PredictionBot(discord.Client):
         )
 
     async def setup_hook(self) -> None:
+        # Register ConfirmParlayView as persistent so "Lock It In" buttons on old
+        # /predict embeds keep working after bot restarts. KirkovaView uses a dynamic
+        # select menu (can't be persistent), so /kirkova embeds need a re-run after restart.
+        self.add_view(ConfirmParlayView(parlay=None, sport=""))
+
         if self._guild:
-            # Sync to guild instantly (dev/production with a known guild ID)
             self.tree.copy_global_to(guild=self._guild)
             synced = await self.tree.sync(guild=self._guild)
             log.info("discord_bot.commands_synced", guild=self._guild.id, count=len(synced))
         else:
-            # Global sync — can take up to 1 hour to propagate
             synced = await self.tree.sync()
             log.info("discord_bot.global_sync", count=len(synced))
 
     async def on_ready(self) -> None:
         log.info("discord_bot.ready", user=str(self.user))
-        print(f"[Bot] Logged in as {self.user} (id={self.user.id})")
+        if self.user:
+            print(f"[Bot] Logged in as {self.user} (id={self.user.id})")
 
 
 bot = PredictionBot()
@@ -86,21 +90,40 @@ async def kirkova(interaction: discord.Interaction) -> None:
 
     try:
         from src.models.parlay import _fetch_candidate_legs
+        from src.notify.discord_views import _locked_game_ids
+
+        already_locked = _locked_game_ids(str(interaction.user.id))
 
         with get_sync_session() as session:
-            nba_legs = _fetch_candidate_legs(session, "nba", "draftkings")
-            mlb_legs = _fetch_candidate_legs(session, "mlb", "draftkings")
+            nba_all = _fetch_candidate_legs(session, "nba", "draftkings")
+            mlb_all = _fetch_candidate_legs(session, "mlb", "draftkings")
+
+        nba_legs = [leg for leg in nba_all if leg.game_id not in already_locked]
+        mlb_legs = [leg for leg in mlb_all if leg.game_id not in already_locked]
         all_legs = nba_legs + mlb_legs
+        total_qualifying = len(nba_all) + len(mlb_all)
     except Exception as exc:
         log.error("discord.kirkova_failed", error=str(exc))
         await interaction.followup.send("⚠️ Error loading predictions.", ephemeral=True)
         return
 
     if not all_legs:
-        await interaction.followup.send(
-            "No high-confidence picks right now. Check back once more games are priced.",
-            ephemeral=True,
-        )
+        if total_qualifying > 0:
+            # User locked everything already
+            embed = discord.Embed(
+                title="✅ You've locked all available picks",
+                description=(
+                    f"You've already tracked every qualifying pick today ({total_qualifying} total).\n"
+                    "Use `/mypicks` to see your picks, or check back tomorrow."
+                ),
+                color=0x2ECC71,
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.followup.send(
+                "No high-confidence picks right now. Check back once more games are priced.",
+                ephemeral=True,
+            )
         return
 
     embed_dict = build_kirkova_embed(nba_legs, mlb_legs)
@@ -113,6 +136,95 @@ async def kirkova(interaction: discord.Interaction) -> None:
 
 
 @bot.tree.command(
+    name="mypicks",
+    description="Show all your pending tracked picks",
+)
+async def mypicks(interaction: discord.Interaction) -> None:
+    await interaction.response.defer(ephemeral=True)
+
+    from src.db.models.discord_parlay import DiscordParlay
+    from src.db.session import get_sync_session
+
+    try:
+        with get_sync_session() as session:
+            picks = (
+                session.query(DiscordParlay)
+                .filter_by(discord_user_id=str(interaction.user.id))
+                .order_by(DiscordParlay.created_at.desc())
+                .limit(20)
+                .all()
+            )
+    except Exception as exc:
+        log.error("discord.mypicks_failed", error=str(exc))
+        await interaction.followup.send("⚠️ Couldn't load your picks.", ephemeral=True)
+        return
+
+    if not picks:
+        await interaction.followup.send("You haven't locked in any picks yet.", ephemeral=True)
+        return
+
+    lines = []
+    for p in picks:
+        status_emoji = {"pending": "⏳", "won": "✅", "lost": "❌", "push": "➖"}.get(  # noqa: RUF001
+            p.status, "❓"
+        )
+        legs_summary = []
+        for leg in p.legs or []:
+            team = leg.get("home_team") if leg.get("pick") == "home" else leg.get("away_team")
+            odds = leg.get("odds_american", 0)
+            odds_str = f"+{odds}" if odds > 0 else str(odds)
+            legs_summary.append(f"{team} ({odds_str})")
+        sport_icon = "🏀" if p.sport_code == "nba" else "⚾"
+        lines.append(
+            f"{status_emoji} {sport_icon} **{' + '.join(legs_summary)}** "
+            f"· {p.n_legs}-leg · EV ${p.parlay_ev:+.0f}/100 · _{p.created_at.strftime('%b %-d')}_"
+        )
+
+    pending = sum(1 for p in picks if p.status == "pending")
+    won = sum(1 for p in picks if p.status == "won")
+    lost = sum(1 for p in picks if p.status == "lost")
+
+    embed = discord.Embed(
+        title=f"📋 {interaction.user.display_name}'s Picks",
+        description="\n".join(lines),
+        color=0x1D82B6,
+    )
+    embed.set_footer(
+        text=f"⏳ {pending} pending  ·  ✅ {won} won  ·  ❌ {lost} lost  ·  Last 20 shown"
+    )
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(
+    name="training",
+    description="Show recent model training runs",
+)
+async def training_log(interaction: discord.Interaction) -> None:
+    await interaction.response.defer(ephemeral=True)
+
+    import os
+
+    log_path = "/app/reports/training_log.md"
+    if not os.path.exists(log_path):
+        await interaction.followup.send("No training log yet — runs tonight.", ephemeral=True)
+        return
+
+    with open(log_path) as f:
+        content = f.read()
+
+    # Show last ~1800 chars (last few runs) to fit in embed
+    if len(content) > 1800:
+        content = "…" + content[-1800:]
+
+    embed = discord.Embed(
+        title="🤖 Training Log",
+        description=f"```\n{content}\n```",
+        color=0x9B59B6,
+    )
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(
     name="record",
     description="Show today's model prediction win/loss record",
 )
@@ -120,18 +232,24 @@ async def record(interaction: discord.Interaction) -> None:
     await interaction.response.defer()
 
     from src.tasks.outcome_tasks import _get_season_record
+    from src.tasks.train_tasks import _get_calibration_stats
 
     nba_rec = _get_season_record("nba")
     mlb_rec = _get_season_record("mlb")
+    nba_cal = _get_calibration_stats("nba")
+    mlb_cal = _get_calibration_stats("mlb")
 
     embed = discord.Embed(
         title="📊 Model Season Record",
         description="\n".join(
             [
                 f"🏀 **NBA:** {nba_rec}",
+                f"  Log-loss: `{nba_cal}`",
                 f"⚾ **MLB:** {mlb_rec}",
+                f"  Log-loss: `{mlb_cal}`",
                 "",
                 "_Last 180 days, active model only_",
+                "_Log-loss < 0.69 = better than random_",
             ]
         ),
         color=0x1D82B6,
