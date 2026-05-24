@@ -84,15 +84,26 @@ BEAT_SCHEDULE = {
         "schedule": crontab(hour=2, minute=30),
         "kwargs": {"sport": "mlb", "kind": "winner"},
     },
-    # ── Drift detection (03:00 UTC) ───────────────────────────────────────────
+    # ── Champion refresh (03:00 UTC — same params, new data, auto-promotes) ──
+    "retrain-champion-nba": {
+        "task": "src.tasks.train_tasks.retrain_champion",
+        "schedule": crontab(hour=3, minute=0),
+        "kwargs": {"sport": "nba", "kind": "winner"},
+    },
+    "retrain-champion-mlb": {
+        "task": "src.tasks.train_tasks.retrain_champion",
+        "schedule": crontab(hour=3, minute=30),
+        "kwargs": {"sport": "mlb", "kind": "winner"},
+    },
+    # ── Drift detection (04:00 UTC) ───────────────────────────────────────────
     "drift-monitor-nba": {
         "task": "src.tasks.train_tasks.run_drift_monitor",
-        "schedule": crontab(hour=3, minute=0),
+        "schedule": crontab(hour=4, minute=0),
         "kwargs": {"sport": "nba"},
     },
     "drift-monitor-mlb": {
         "task": "src.tasks.train_tasks.run_drift_monitor",
-        "schedule": crontab(hour=3, minute=30),
+        "schedule": crontab(hour=4, minute=30),
         "kwargs": {"sport": "mlb"},
     },
     # ── Weekly promotion gate (Mon 04:00 UTC) ─────────────────────────────────

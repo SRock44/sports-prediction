@@ -164,6 +164,7 @@ def train_winner_model(
     n_optuna_trials: int = 500,
     run_name: str | None = None,
     wide_search: bool = False,
+    fixed_params: dict | None = None,
 ) -> tuple[str, dict[str, float]]:
     """Train calibrated ensemble model. Returns (mlflow_run_id, metrics_dict)."""
     lam = _LAMBDA.get(sport, 0.25)
@@ -265,7 +266,16 @@ def train_winner_model(
     _params_path = f"reports/{sport}_winner_xgb_params.json"
     os.makedirs("reports", exist_ok=True)
 
-    if n_optuna_trials == 0 and os.path.exists(_params_path):
+    if fixed_params is not None:
+        # Use caller-supplied params directly (e.g. champion retrain) — no search, no file write
+        best_xgb_params = {
+            k[4:]: v
+            for k, v in fixed_params.items()
+            if k.startswith("xgb_") and k != "xgb_best_n_trees"
+        }
+        print(f"[XGBoost] Using fixed params (champion retrain): {best_xgb_params}\n")
+        log.info("optuna.xgb_fixed", sport=sport, params=best_xgb_params)
+    elif n_optuna_trials == 0 and os.path.exists(_params_path):
         with open(_params_path) as _f:
             best_xgb_params = json.load(_f)
         print(f"[XGBoost] Skipping search — loaded saved params from {_params_path}")
@@ -385,7 +395,15 @@ def train_winner_model(
         _lgb_params_path = f"reports/{sport}_winner_lgb_params.json"
         _lgb_actual_trials = n_optuna_trials if n_optuna_trials > 0 else 0
 
-        if _lgb_actual_trials == 0 and os.path.exists(_lgb_params_path):
+        if fixed_params is not None:
+            best_lgb_params = {
+                k[4:]: v
+                for k, v in fixed_params.items()
+                if k.startswith("lgb_") and k != "lgb_best_n_trees"
+            }
+            print(f"[LightGBM] Using fixed params (champion retrain): {best_lgb_params}\n")
+            log.info("optuna.lgb_fixed", sport=sport, params=best_lgb_params)
+        elif _lgb_actual_trials == 0 and os.path.exists(_lgb_params_path):
             with open(_lgb_params_path) as _f:
                 best_lgb_params = json.load(_f)
             print(f"[LightGBM] Skipping search — loaded saved params from {_lgb_params_path}")
