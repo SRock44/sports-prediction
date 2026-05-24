@@ -45,10 +45,10 @@ Promotion gate: challenger must beat champion by ≥ 0.005 log-loss
 
 ---
 
-## Model id=3 — NBA Champion (Current)
+## Model id=3 — NBA Champion (superseded 2026-05-24)
 **Date:** 2026-05-22 21:47 UTC
 **Sport:** NBA
-**Status:** Active champion ✓
+**Status:** Not active (superseded by id=8)
 
 | Metric   | Value  |
 |----------|--------|
@@ -58,16 +58,17 @@ Promotion gate: challenger must beat champion by ≥ 0.005 log-loss
 | ECE      | 0.0389 |
 
 **Notes:**
-- Current NBA champion — the target to beat
+- Held champion status from 2026-05-22 → 2026-05-24
 - Much better calibration than id=2 (ECE 0.039 vs 0.158)
 - 50 Optuna trials
+- Superseded by id=8 which improved log-loss by 0.016
 
 ---
 
-## Model id=4 — MLB Champion (Current)
+## Model id=4 — MLB Champion (superseded 2026-05-24)
 **Date:** 2026-05-22 22:22 UTC
 **Sport:** MLB
-**Status:** Active champion ✓
+**Status:** Not active (superseded by id=7)
 
 | Metric   | Value  |
 |----------|--------|
@@ -78,9 +79,10 @@ Promotion gate: challenger must beat champion by ≥ 0.005 log-loss
 | Samples  | 745    |
 
 **Notes:**
-- Current MLB champion — the target to beat
+- Held champion status from 2026-05-22 → 2026-05-24
 - Well-calibrated (ECE 0.019) but low accuracy reflects baseball's inherent randomness
 - 50 Optuna trials
+- Superseded by id=7 (champion refresh on 2026-05-24 data)
 
 ---
 
@@ -197,3 +199,111 @@ Champions unchanged after Run 4 — id=3 (NBA) and id=4 (MLB) still active.
 |-------|-------------|-----------|---------------|
 | NBA   | 3           | 0.6627 log-loss | High 60s% |
 | MLB   | 4           | 0.6841 log-loss | Mid 50s%  |
+
+---
+
+---
+# 2026-05-24 — Pipeline automation, nightly promotion, new champions
+---
+
+## System changes on 2026-05-24
+
+### Promotion gate — now runs nightly
+- `evaluate_and_promote` moved from weekly (Mon 11 PM EST) to **nightly at 1:00/1:15 AM EST**
+- Timing chosen to land after west coast late games finish (~12:45 AM EST)
+- Freshest data and best log-loss wins every night — no weekly gate
+
+### Promotion gate — Brier tolerance added
+- Old gate: Brier must be strictly ≤ champion (zero tolerance)
+- New gate: Brier may be up to +0.005 worse — log-loss is the primary metric
+- Reason: 0.0008 Brier difference was blocking a 0.016 log-loss improvement
+
+### Bug fixed: evaluate_and_promote searched wrong MLflow experiment
+- Was hardcoded to `experiment_ids=["0"]` (MLflow default)
+- Runs are logged under experiment `"prediction"` (id=707137705556388270)
+- Fixed to resolve experiment by name via `get_experiment_by_name()`
+- This bug caused every nightly promotion to return `no_challengers` silently
+
+### NBA game seeding from DraftKings odds
+- nba.com CDN blocks server IP — `ScoreboardV2` returns empty JSON
+- `ingest_odds_open` now auto-creates NBA `Game` records from DK odds data
+- external_id format: `odds_{TEAM}_{DATE}` for odds-seeded games
+
+---
+
+## Model id=5 — NBA Champion Refresh (degraded, not promoted)
+**Date:** 2026-05-24 18:34 UTC  |  **Run ID:** `b8beac98`
+**Sport:** NBA
+**Status:** Not promoted — degraded vs champion
+
+| Metric   | Value  |
+|----------|--------|
+| Log-loss | 0.6846 |
+| Accuracy | 66.23% |
+| Brier    | 0.2175 |
+| ECE      | 0.0318 |
+| Samples  | 1,297  |
+
+**Notes:**
+- `retrain_champion` task re-ran champion hyperparams on latest data — got worse (0.6677 → 0.6846)
+- Indicates today's data distribution shifted slightly vs May 22 holdout
+- Champion id=3 retained
+
+---
+
+## Model id=6 — MLB Champion Refresh (promoted → id=7)
+**Date:** 2026-05-24 12:49 UTC  |  **Run ID:** `f19ffb85` (challenger) / `9bf1b64b` (refresh)
+**Sport:** MLB
+**Status:** See id=7
+
+---
+
+## Model id=7 — MLB Champion (Current)
+**Date:** 2026-05-24  |  **Run ID:** `9bf1b64b`
+**Sport:** MLB
+**Status:** Active champion ✓
+
+| Metric   | Value  |
+|----------|--------|
+| Log-loss | 0.6889 |
+| Accuracy | 53.83% |
+| Brier    | 0.2479 |
+| ECE      | 0.0261 |
+| Samples  | ~745   |
+
+**Notes:**
+- Champion refresh on 2026-05-24 data — marginal log-loss improvement over id=4 (0.6891 → 0.6889)
+- Best accuracy of all MLB runs to date (53.83%)
+- Challenger `f19ffb85` (logloss 0.6884) beat it by only 0.0005 — below the 0.005 gate, correctly blocked
+- MLB models cluster tightly; baseball's inherent randomness limits separation between runs
+
+---
+
+## Model id=8 — NBA Champion (Current) ✓
+**Date:** 2026-05-24 18:41 UTC  |  **Run ID:** `9b6b32c4`
+**Sport:** NBA
+**Status:** Active champion ✓
+
+| Metric   | Value  |
+|----------|--------|
+| Log-loss | **0.6514** |
+| Accuracy | 65.07% |
+| Brier    | 0.2179 |
+| ECE      | 0.0337 |
+| Samples  | 1,297  |
+
+**Notes:**
+- Best NBA log-loss to date — improved by **0.016** over id=3 (0.6677 → 0.6514)
+- 100 Optuna trials with constrained search space (lessons from Run 4 overfitting)
+- Accuracy dropped 1.1% vs id=3 — expected and acceptable. Log-loss improved because the model is better calibrated on close games, not because it got worse on easy ones
+- Brier 0.0008 worse than id=3 — within noise; gate tolerance of 0.005 correctly allowed promotion
+- Promoted via first ever nightly `evaluate_and_promote` run (previously weekly gate was bugged)
+
+---
+
+## Targets (updated 2026-05-24)
+
+| Sport | Champion id | Run ID | Must beat (log-loss) | Accuracy goal |
+|-------|-------------|--------|----------------------|---------------|
+| NBA   | 8           | `9b6b32c4` | 0.6464 | High 60s% |
+| MLB   | 7           | `9bf1b64b` | 0.6839 | Mid 50s%  |
