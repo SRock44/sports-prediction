@@ -1,7 +1,7 @@
-"""DraftKings Sportsbook — odds fetch via their public web API.
+"""DraftKings Sportsbook — odds via their public nash API.
 
-This is the same API their frontend uses. No key required.
-Endpoints and league IDs are stable but not officially documented.
+Endpoint: sportsbook-nash.draftkings.com (replaces deprecated sportsbook.draftkings.com/api/odds/v1)
+No key required.
 """
 
 from __future__ import annotations
@@ -15,12 +15,17 @@ from src.core.logging import get_logger
 
 log = get_logger(__name__)
 
-_BASE = "https://sportsbook.draftkings.com/api/odds/v1"
+_BASE = "https://sportsbook-nash.draftkings.com/api/sportscontent/dkusnj/v1"
 
-# DraftKings internal sport/category IDs
 _LEAGUE_IDS = {
     "nba": 42648,
     "mlb": 84240,
+}
+
+# Game Lines category ID differs by sport
+_GAME_LINES_CATEGORY = {
+    "nba": 487,
+    "mlb": 493,
 }
 
 _HEADERS = {
@@ -37,17 +42,14 @@ _HEADERS = {
     reraise=True,
 )
 def get_game_lines(sport_code: str) -> list[dict[str, Any]]:
-    """Return list of parsed game-line dicts for all upcoming games in a sport.
-
-    Each dict has: home_team, away_team, commence_time, home_ml, away_ml,
-    home_spread, away_spread.
-    """
+    """Return normalized game-line dicts for all upcoming games in a sport."""
     league_id = _LEAGUE_IDS.get(sport_code.lower())
     if not league_id:
         raise ValueError(f"No DraftKings league ID for sport: {sport_code}")
 
+    category_id = _GAME_LINES_CATEGORY[sport_code.lower()]
     resp = requests.get(
-        f"{_BASE}/leagues/{league_id}",
+        f"{_BASE}/leagues/{league_id}/categories/{category_id}",
         headers=_HEADERS,
         timeout=15,
     )
@@ -55,94 +57,72 @@ def get_game_lines(sport_code: str) -> list[dict[str, Any]]:
     resp.raise_for_status()
     data = resp.json()
 
-    return _parse_events(data)
+    return _parse(data)
 
 
-def _parse_events(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Parse DraftKings event groups response into normalized game dicts."""
-    out: list[dict[str, Any]] = []
+def _parse(data: dict[str, Any]) -> list[dict[str, Any]]:
+    events = data.get("events", [])
+    markets = {m["id"]: m for m in data.get("markets", [])}
+    selections = data.get("selections", [])
 
-    # Find game lines category (moneyline + spread)
-    offers_map: dict[str, dict[str, Any]] = {}
+    # Build event lookup: event_id -> game dict
+    event_map: dict[str, dict[str, Any]] = {}
+    for ev in events:
+        home = away = ""
+        for p in ev.get("participants", []):
+            role = p.get("venueRole", "")
+            # Prefer full rosettaTeamName, fall back to name field
+            name = p.get("metadata", {}).get("rosettaTeamName") or p.get("name", "")
+            if role == "Home":
+                home = name
+            elif role == "Away":
+                away = name
+        if home and away:
+            event_map[ev["id"]] = {
+                "home_team": home,
+                "away_team": away,
+                "commence_time": ev.get("startEventDate", ""),
+                "home_ml": None,
+                "away_ml": None,
+                "home_spread": None,
+            }
 
-    # DK nests events under eventGroups → offerSubcategory → offers
-    for event_group in data.get("eventGroup", {}).get("events", []):
-        event_id = str(event_group.get("eventId", ""))
-        home = event_group.get("teamName1", "")  # home is teamName1 in DK convention
-        away = event_group.get("teamName2", "")
-        start_time = event_group.get("startDate", "")
-        offers_map[event_id] = {
-            "home_team": home,
-            "away_team": away,
-            "commence_time": start_time,
-            "home_ml": None,
-            "away_ml": None,
-            "home_spread": None,
-        }
+    # Map selections onto events via their market
+    for sel in selections:
+        market = markets.get(sel.get("marketId", ""))
+        if not market:
+            continue
+        event_id = str(market.get("eventId", ""))
+        game = event_map.get(event_id)
+        if not game:
+            continue
 
-    # Also try the newer API structure
-    for ev in _iter_events_v2(data):
-        out.append(ev)
+        market_name = (market.get("marketType") or {}).get("name", "").lower()
+        outcome_type = sel.get("outcomeType", "")  # "Home" or "Away"
+        odds = _parse_american(sel.get("displayOdds", {}).get("american"))
+        points = sel.get("points")
 
-    return out if out else list(offers_map.values())
+        if "moneyline" in market_name:
+            if outcome_type == "Home":
+                game["home_ml"] = odds
+            elif outcome_type == "Away":
+                game["away_ml"] = odds
+        elif (
+            any(k in market_name for k in ("spread", "run line", "puck line"))
+            and outcome_type == "Home"
+            and points is not None
+        ):
+            game["home_spread"] = float(points)
 
-
-def _iter_events_v2(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Handle DraftKings' newer nested response shape."""
-    out = []
-    for cat in data.get("eventGroup", {}).get("offerCategories", []):
-        for subcat in cat.get("offerSubcategoryDescriptors", []):
-            for sub in subcat.get("offerSubcategory", {}).get("offers", []):
-                for offer_group in sub:
-                    if not isinstance(offer_group, list):
-                        offer_group = [offer_group]
-                    for offer in offer_group:
-                        try:
-                            parsed = _parse_offer(offer)
-                            if parsed:
-                                out.append(parsed)
-                        except Exception:
-                            continue
-    return out
+    return list(event_map.values())
 
 
-def _parse_offer(offer: dict[str, Any]) -> dict[str, Any] | None:
-    label = (offer.get("label") or "").lower()
-    if "game" not in label and "moneyline" not in label and "spread" not in label:
+def _parse_american(value: Any) -> float | None:
+    """Parse American odds string, handling Unicode minus sign U+2212 (-)."""
+    if value is None:
         return None
-
-    outcomes = offer.get("outcomes", [])
-    if len(outcomes) < 2:
-        return None
-
-    home_outcome = next((o for o in outcomes if o.get("label") == "Home"), None)
-    away_outcome = next((o for o in outcomes if o.get("label") == "Away"), None)
-    if home_outcome is None or away_outcome is None:
-        home_outcome = outcomes[0]
-        away_outcome = outcomes[1]
-
-    return {
-        "home_team": home_outcome.get("participant", ""),
-        "away_team": away_outcome.get("participant", ""),
-        "commence_time": offer.get("startDate", ""),
-        "home_ml": _safe_price(home_outcome.get("oddsAmerican")),
-        "away_ml": _safe_price(away_outcome.get("oddsAmerican")),
-        "home_spread": _safe_float(home_outcome.get("line")),
-    }
-
-
-def _safe_price(v: Any) -> float | None:
-    if v is None:
-        return None
-    s = str(v).replace("+", "")
+    s = str(value).replace("−", "-").replace("+", "").strip()  # noqa: RUF001
     try:
         return float(s)
     except ValueError:
-        return None
-
-
-def _safe_float(v: Any) -> float | None:
-    try:
-        return float(v)
-    except (TypeError, ValueError):
         return None

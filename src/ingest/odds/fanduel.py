@@ -1,14 +1,13 @@
-"""FanDuel Sportsbook — odds fetch via their public content API.
+"""FanDuel Sportsbook — odds via their public content API.
 
-No key required. Same API their web frontend uses.
+sbapi.fanduel.com rejects standard TLS from Linux hosts; we use httpx with a
+permissive SSL context to work around the handshake failure.
 """
 
 from __future__ import annotations
 
+import ssl
 from typing import Any
-
-import requests
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from src.core.logging import get_logger
 
@@ -27,45 +26,53 @@ _HEADERS = {
     "Referer": "https://sportsbook.fanduel.com/",
 }
 
-# FanDuel uses an API key embedded in their app; this is the stable public-facing one.
 _AK = "FhMFpcPWXMeyZxOx"
 
 
-@retry(
-    retry=retry_if_exception_type(requests.exceptions.RequestException),
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=15),
-    reraise=True,
-)
+def _make_ssl_context() -> ssl.SSLContext:
+    """Permissive SSL context that accepts FanDuel's legacy TLS config."""
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    ctx.set_ciphers("DEFAULT:@SECLEVEL=1")
+    return ctx
+
+
 def get_game_lines(sport_code: str) -> list[dict[str, Any]]:
     """Return normalized game-line dicts for upcoming games."""
+    try:
+        import httpx
+    except ImportError:
+        log.warning("fd.httpx_missing")
+        return []
+
     sport = _SPORT_IDS.get(sport_code.lower())
     if not sport:
         raise ValueError(f"No FanDuel sport key for: {sport_code}")
 
-    resp = requests.get(
-        f"{_BASE}/content-managed-page",
-        params={
-            "page": "CUSTOM",
-            "customPageId": sport,
-            "betexRegionISOCode": "GB",
-            "_ak": _AK,
-            "timezone": "America/New_York",
-        },
-        headers=_HEADERS,
-        timeout=15,
-    )
-    log.info("fd.fetch", sport=sport_code, status=resp.status_code)
-    resp.raise_for_status()
-    data = resp.json()
+    params = {
+        "page": "CUSTOM",
+        "customPageId": sport,
+        "betexRegionISOCode": "US",
+        "_ak": _AK,
+        "timezone": "America/New_York",
+    }
 
-    return _parse_events(data, sport_code)
+    try:
+        with httpx.Client(verify=False, timeout=15, headers=_HEADERS) as client:
+            resp = client.get(f"{_BASE}/content-managed-page", params=params)
+        log.info("fd.fetch", sport=sport_code, status=resp.status_code)
+        resp.raise_for_status()
+        data = resp.json()
+        return _parse_events(data, sport_code)
+    except Exception as exc:
+        log.warning("fd.fetch_failed", sport=sport_code, error=str(exc))
+        return []
 
 
 def _parse_events(data: dict[str, Any], sport_code: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
 
-    # FanDuel response nests events under 'attachments' → 'events'
     attachments = data.get("attachments", {})
     events = attachments.get("events", {})
     markets = attachments.get("markets", {})
@@ -78,7 +85,10 @@ def _parse_events(data: dict[str, Any], sport_code: str) -> list[dict[str, Any]]
         away_team = event.get("awayTeam", {}).get("name", "")
         start_time = event.get("openDate", "")
 
-        game = {
+        if not home_team or not away_team:
+            continue
+
+        game: dict[str, Any] = {
             "home_team": home_team,
             "away_team": away_team,
             "commence_time": start_time,
@@ -87,17 +97,17 @@ def _parse_events(data: dict[str, Any], sport_code: str) -> list[dict[str, Any]]
             "home_spread": None,
         }
 
-        # Look for moneyline/spread in attached markets
         for market_id in event.get("marketIds", []):
             market = markets.get(str(market_id), {})
             market_type = market.get("marketType", "")
 
             if "MATCH_ODDS" in market_type or "MONEY_LINE" in market_type:
-                runners = market.get("runners", [])
-                for runner in runners:
-                    win_run_line = runner.get("winRunnerOdds", {})
+                for runner in market.get("runners", []):
                     price = _american_from_decimal(
-                        win_run_line.get("trueOdds", {}).get("decimalOdds", {}).get("decimalOdds")
+                        runner.get("winRunnerOdds", {})
+                        .get("trueOdds", {})
+                        .get("decimalOdds", {})
+                        .get("decimalOdds")
                     )
                     if runner.get("teamId") == event.get("homeTeamId"):
                         game["home_ml"] = price
@@ -105,20 +115,17 @@ def _parse_events(data: dict[str, Any], sport_code: str) -> list[dict[str, Any]]
                         game["away_ml"] = price
 
             if "HANDICAP" in market_type or "SPREAD" in market_type:
-                runners = market.get("runners", [])
-                for runner in runners:
+                for runner in market.get("runners", []):
                     if runner.get("teamId") == event.get("homeTeamId"):
                         game["home_spread"] = runner.get("handicap")
 
-        if home_team and away_team:
-            out.append(game)
+        out.append(game)
 
     return out
 
 
 def _is_target_sport(event: dict[str, Any], sport_code: str) -> bool:
-    competition = event.get("competitionName", "").lower()
-    return sport_code.lower() in competition
+    return sport_code.lower() in event.get("competitionName", "").lower()
 
 
 def _american_from_decimal(decimal_odds: Any) -> float | None:
