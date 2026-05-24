@@ -1,7 +1,18 @@
 # Secrets — NEVER commit these
 .env
+.env.*
+!.env.example
 *.pem
 *.key
+*.p12
+*.pfx
+*.secret
+id_rsa
+id_ed25519
+id_dsa
+credentials.json
+token.json
+service_account*.json
 
 # Python
 __pycache__/
@@ -38,6 +49,7 @@ pybaseball_cache/
 
 # Docker
 *.log
+docker-compose.override.yml
 
 # LaTeX build artifacts (only commit .tex and .pdf)
 *.aux
