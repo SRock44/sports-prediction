@@ -142,15 +142,17 @@ BEAT_SCHEDULE = {
         "schedule": crontab(hour=4, minute=30),  # 11:30 PM EST
         "kwargs": {"sport": "mlb"},
     },
-    # ── Weekly promotion gate (Mon 11:00/11:30 PM EST / Tue 4:00/4:30 AM UTC)
+    # ── Daily promotion gate (1:00/1:15 AM EST / 6:00/6:15 UTC) ────────────
+    # After west coast late games finish (~12:45 AM EST). Challenger trained
+    # on freshest data each morning; best log-loss wins every night.
     "evaluate-and-promote-nba": {
         "task": "src.tasks.train_tasks.evaluate_and_promote",
-        "schedule": crontab(hour=4, minute=0, day_of_week=1),  # Mon 11:00 PM EST
+        "schedule": crontab(hour=6, minute=0),  # 1:00 AM EST
         "kwargs": {"sport": "nba"},
     },
     "evaluate-and-promote-mlb": {
         "task": "src.tasks.train_tasks.evaluate_and_promote",
-        "schedule": crontab(hour=4, minute=30, day_of_week=1),  # Mon 11:30 PM EST
+        "schedule": crontab(hour=6, minute=15),  # 1:15 AM EST
         "kwargs": {"sport": "mlb"},
     },
     # ── Weekly backtest report (Sat 10:00/10:30 PM EST / Sun 3:00/3:30 AM UTC)
