@@ -17,12 +17,12 @@ from src.ingest.common import dict_hash
 log = get_logger(__name__)
 
 
-@shared_task(name="tasks.rebuild_features_nba", bind=True, max_retries=3)
+@shared_task(name="src.tasks.feature_tasks.rebuild_features_nba", bind=True, max_retries=3)
 def rebuild_features_nba(self: Any) -> dict[str, Any]:
     return _rebuild_features("nba")
 
 
-@shared_task(name="tasks.rebuild_features_mlb", bind=True, max_retries=3)
+@shared_task(name="src.tasks.feature_tasks.rebuild_features_mlb", bind=True, max_retries=3)
 def rebuild_features_mlb(self: Any) -> dict[str, Any]:
     return _rebuild_features("mlb")
 

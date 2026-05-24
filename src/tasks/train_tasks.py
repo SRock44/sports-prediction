@@ -246,19 +246,30 @@ def _load_training_df(session: Any, sport: str) -> Any:
 
     rows = session.execute(
         text("""
-        SELECT g.id, g.scheduled_utc, g.season, g.home_team_id, g.away_team_id,
-               g.home_score, g.away_score,
-               CASE WHEN g.home_score > g.away_score THEN 1 ELSE 0 END AS target,
+        SELECT g.id, g.scheduled_utc, g.season,
+               CASE WHEN g.home_score > g.away_score THEN 1 ELSE 0 END AS y,
                mf.features
         FROM games g
-        LEFT JOIN matchup_features mf ON mf.game_id = g.id
+        JOIN matchup_features mf ON mf.game_id = g.id
         JOIN sports s ON s.id = g.sport_id
         WHERE s.code = :code AND g.status='final' AND g.home_score IS NOT NULL
+          AND mf.features IS NOT NULL
         ORDER BY g.scheduled_utc
     """),
         {"code": sport},
     ).fetchall()
-    return pd.DataFrame([dict(r._mapping) for r in rows])
+
+    records = []
+    for r in rows:
+        row = dict(r._mapping)
+        features = row.pop("features") or {}
+        rec = dict(features)
+        rec["y"] = row["y"]
+        rec["season"] = row["season"]
+        rec["game_date"] = row["scheduled_utc"].date() if row["scheduled_utc"] else None
+        records.append(rec)
+
+    return pd.DataFrame(records).dropna(subset=["game_date"])
 
 
 def _get_feature_names(sport: str, kind: str) -> list[str]:
