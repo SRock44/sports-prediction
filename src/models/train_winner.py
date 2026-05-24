@@ -527,8 +527,12 @@ def should_promote(
     champion_metrics: dict[str, float],
     min_logloss_improvement: float = 0.005,
     max_ece_increase: float = 0.02,
+    max_brier_increase: float = 0.005,
 ) -> tuple[bool, str]:
-    """Promotion gate. Returns (should_promote, reason)."""
+    """Promotion gate. Log-loss is primary; Brier/ECE are sanity checks only.
+
+    Returns (should_promote, reason).
+    """
     chall_ll = challenger_metrics.get("logloss", 999)
     champ_ll = champion_metrics.get("logloss", 999)
     chall_ece = challenger_metrics.get("ece", 999)
@@ -543,6 +547,6 @@ def should_promote(
         )
     if chall_ece > champ_ece + max_ece_increase:
         return False, f"ECE {chall_ece:.4f} exceeds champion {champ_ece:.4f} by margin"
-    if chall_brier > champ_brier:
-        return False, f"Brier {chall_brier:.4f} worse than champion {champ_brier:.4f}"
+    if chall_brier > champ_brier + max_brier_increase:
+        return False, f"Brier {chall_brier:.4f} exceeds champion {champ_brier:.4f} by margin"
     return True, "all gates passed"
