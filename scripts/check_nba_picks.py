@@ -1,11 +1,14 @@
 """Check if NBA predictions are available with odds for /kirkova and daily picks."""
+
+from sqlalchemy import text
+
 from src.db.session import sync_session_factory
 from src.models.parlay import select_top_picks
-from sqlalchemy import text
 
 with sync_session_factory() as s:
     # Raw check: NBA predictions joined with odds
-    rows = s.execute(text("""
+    rows = s.execute(
+        text("""
         SELECT
             g.id AS game_id,
             ht.name AS home_team,
@@ -27,12 +30,15 @@ with sync_session_factory() as s:
           AND g.scheduled_utc > NOW() - INTERVAL '24 hours'
           AND p.target = 'home_won'
         ORDER BY g.scheduled_utc, go.bookmaker
-    """)).fetchall()
+    """)
+    ).fetchall()
 
     print(f"\nNBA predictions with odds ({len(rows)} rows):")
     for r in rows:
         print(f"  {r.away_team} @ {r.home_team} | {r.scheduled_utc} | status={r.status}")
-        print(f"    prob={float(r.probability):.3f} | book={r.bookmaker} | home_ml={r.home_price} away_ml={r.away_price} | snap={r.snapshot}")
+        print(
+            f"    prob={float(r.probability):.3f} | book={r.bookmaker} | home_ml={r.home_price} away_ml={r.away_price} | snap={r.snapshot}"
+        )
 
     # Now try select_top_picks
     print("\n--- select_top_picks (draftkings) ---")
@@ -40,4 +46,6 @@ with sync_session_factory() as s:
     print(f"  Qualifying picks: {len(picks)}")
     for p in picks:
         pick_team = p.home_team if p.pick == "home" else p.away_team
-        print(f"  PICK: {pick_team} | model_prob={p.model_prob:.1%} | edge={p.edge:+.1%} | odds={p.odds_american}")
+        print(
+            f"  PICK: {pick_team} | model_prob={p.model_prob:.1%} | edge={p.edge:+.1%} | odds={p.odds_american}"
+        )

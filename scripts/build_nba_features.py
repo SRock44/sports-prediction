@@ -11,6 +11,7 @@ Usage:
   docker compose exec api python scripts/build_nba_features.py --seasons 3
   docker compose exec api python scripts/build_nba_features.py --force   # rebuild all
 """
+
 from __future__ import annotations
 
 import argparse
@@ -36,12 +37,12 @@ def _fmt_seconds(s: float) -> str:
     if s < 60:
         return f"{s:.0f}s"
     if s < 3600:
-        return f"{s/60:.1f}m"
-    return f"{s/3600:.1f}h"
+        return f"{s / 60:.1f}m"
+    return f"{s / 3600:.1f}h"
 
 
 def _header(msg: str) -> None:
-    print(f"\n{'='*60}\n  {msg}\n{'='*60}")
+    print(f"\n{'=' * 60}\n  {msg}\n{'=' * 60}")
 
 
 def build_features_for_seasons(season_years: list[int], force: bool = False) -> None:
@@ -61,17 +62,13 @@ def build_features_for_seasons(season_years: list[int], force: bool = False) -> 
                 Game.status == "final",
                 Game.season.in_(season_years),
                 or_(Game.meta["game_type"] is None, Game.meta["game_type"].astext != "PR"),
-                Game.id.in_(
-                    session.query(PlayerGameStats.game_id).distinct()
-                ),
+                Game.id.in_(session.query(PlayerGameStats.game_id).distinct()),
             )
             .order_by(Game.scheduled_utc)
         )
 
         if not force:
-            already_built = (
-                session.query(MatchupFeature.game_id).subquery()
-            )
+            already_built = session.query(MatchupFeature.game_id).subquery()
             base_q = base_q.filter(~Game.id.in_(already_built))
 
         pending = base_q.all()
@@ -106,11 +103,13 @@ def build_features_for_seasons(season_years: list[int], force: bool = False) -> 
 
                 existing = session.query(MatchupFeature).filter_by(game_id=game_id).first()
                 if existing is None:
-                    session.add(MatchupFeature(
-                        game_id=game_id,
-                        features=features,
-                        computed_at=scheduled_utc,
-                    ))
+                    session.add(
+                        MatchupFeature(
+                            game_id=game_id,
+                            features=features,
+                            computed_at=scheduled_utc,
+                        )
+                    )
                 else:
                     existing.features = features
                     existing.computed_at = scheduled_utc
@@ -139,16 +138,20 @@ def build_features_for_seasons(season_years: list[int], force: bool = False) -> 
     with get_sync_session() as session:
         sport = session.query(Sport).filter_by(code="nba").first()
         for season_year in season_years:
-            total_games = session.query(Game).filter(
-                Game.sport_id == sport.id, Game.season == season_year, Game.status == "final"
-            ).count()
+            total_games = (
+                session.query(Game)
+                .filter(
+                    Game.sport_id == sport.id, Game.season == season_year, Game.status == "final"
+                )
+                .count()
+            )
             with_features = (
                 session.query(MatchupFeature)
                 .join(Game, MatchupFeature.game_id == Game.id)
                 .filter(Game.sport_id == sport.id, Game.season == season_year)
                 .count()
             )
-            label = f"{season_year}-{str(season_year+1)[-2:]}"
+            label = f"{season_year}-{str(season_year + 1)[-2:]}"
             print(f"  {label}  — {total_games:4d} games  {with_features:4d} with features")
 
     print()
@@ -156,7 +159,9 @@ def build_features_for_seasons(season_years: list[int], force: bool = False) -> 
     print("    python -m src.cli train --sport nba --kind winner --trials 50 --promote")
 
 
-def _print_progress(done: int, errors: int, skipped: int, total: int, start: float, inline: bool = False) -> None:
+def _print_progress(
+    done: int, errors: int, skipped: int, total: int, start: float, inline: bool = False
+) -> None:
     elapsed = time.monotonic() - start
     rate = done / elapsed if elapsed > 0 else 0
     remaining = (total - done - errors - skipped) / rate if rate > 0 else 0
@@ -180,12 +185,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build NBA matchup features for completed historical games"
     )
-    parser.add_argument("--seasons", type=int, default=5,
-                        help="Number of past seasons (default: 5)")
-    parser.add_argument("--season-start", type=int, default=None,
-                        help="Oldest season year (e.g. 2020)")
-    parser.add_argument("--force", action="store_true",
-                        help="Rebuild features even if they already exist")
+    parser.add_argument(
+        "--seasons", type=int, default=5, help="Number of past seasons (default: 5)"
+    )
+    parser.add_argument(
+        "--season-start", type=int, default=None, help="Oldest season year (e.g. 2020)"
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="Rebuild features even if they already exist"
+    )
     args = parser.parse_args()
 
     today = date.today()
@@ -194,7 +202,7 @@ def main() -> None:
     season_years = list(range(season_start, current_season + 1))
 
     print("\nNBA Feature Builder")
-    print(f"Target seasons: {[f'{y}-{str(y+1)[-2:]}' for y in season_years]}")
+    print(f"Target seasons: {[f'{y}-{str(y + 1)[-2:]}' for y in season_years]}")
     print(f"Force rebuild:  {args.force}")
 
     build_features_for_seasons(season_years, force=args.force)

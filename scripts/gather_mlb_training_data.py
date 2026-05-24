@@ -8,6 +8,7 @@ Phases:
 Usage:
   docker compose run --rm api python scripts/gather_mlb_training_data.py --seasons 5
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,7 +36,7 @@ def _progress(done: int, total: int, errors: int, skipped: int, eta_secs: float 
     filled = int(pct * 30)
     bar = "█" * filled + "░" * (30 - filled)
     eta = f"ETA {eta_secs / 3600:.1f}h" if eta_secs else "ETA --"
-    return f"  [{bar}] {pct*100:5.1f}%  {done}/{total} games  err={errors}  skip={skipped}  {eta}"
+    return f"  [{bar}] {pct * 100:5.1f}%  {done}/{total} games  err={errors}  skip={skipped}  {eta}"
 
 
 def phase1_teams(session, seasons: list[int]) -> None:
@@ -68,7 +69,9 @@ def phase2_schedules(session, seasons: list[int]) -> None:
         try:
             result = ingest_season_schedule(session, season)
             session.commit()
-            print(f"done  +{result.rows_inserted} games  updated={result.rows_updated}  err={len(result.errors)}")
+            print(
+                f"done  +{result.rows_inserted} games  updated={result.rows_updated}  err={len(result.errors)}"
+            )
         except Exception as e:
             print(f"FAILED: {e}")
 
@@ -106,7 +109,9 @@ def phase3_box_scores(session, seasons: list[int]) -> None:
     errors = 0
     skipped = 0
 
-    print(f"  {total} completed games total  {done} already have box scores  {len(pending)} to fetch")
+    print(
+        f"  {total} completed games total  {done} already have box scores  {len(pending)} to fetch"
+    )
     if not pending:
         print("  All box scores already present.")
         return
@@ -114,7 +119,6 @@ def phase3_box_scores(session, seasons: list[int]) -> None:
     start_time = time.monotonic()
 
     for i, game in enumerate(pending):
-
         try:
             result = ingest_box_score(session, game.external_id)
             session.commit()
@@ -142,7 +146,9 @@ def phase3_box_scores(session, seasons: list[int]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Gather MLB training data")
     parser.add_argument("--seasons", type=int, default=5, help="Number of past seasons to backfill")
-    parser.add_argument("--season-start", type=int, default=None, help="Override starting season year")
+    parser.add_argument(
+        "--season-start", type=int, default=None, help="Override starting season year"
+    )
     parser.add_argument("--skip-rosters", action="store_true")
     parser.add_argument("--skip-box-scores", action="store_true")
     parser.add_argument("--box-scores-only", action="store_true")

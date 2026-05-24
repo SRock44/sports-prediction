@@ -6,6 +6,7 @@ Resumable: skips games that already have features unless --force is passed.
 Usage:
   docker compose run --rm api python scripts/build_mlb_features.py
 """
+
 from __future__ import annotations
 
 import argparse
@@ -24,7 +25,9 @@ from src.features.mlb.matchup import build_matchup_features
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build MLB matchup features")
-    parser.add_argument("--force", action="store_true", help="Rebuild features even if already present")
+    parser.add_argument(
+        "--force", action="store_true", help="Rebuild features even if already present"
+    )
     args = parser.parse_args()
 
     with get_sync_session() as session:
@@ -82,18 +85,24 @@ def main() -> None:
                 elapsed = time.monotonic() - start
                 rate = done / elapsed if elapsed > 0 else 0
                 eta = (total - done) / rate if rate > 0 else None
-                eta_str = f"ETA {eta/3600:.1f}h" if eta else "ETA --"
-                print(f"\r  {done}/{total}  err={errors}  {eta_str}  [last error: {e}]", end="", flush=True)
+                eta_str = f"ETA {eta / 3600:.1f}h" if eta else "ETA --"
+                print(
+                    f"\r  {done}/{total}  err={errors}  {eta_str}  [last error: {e}]",
+                    end="",
+                    flush=True,
+                )
                 session.rollback()
                 continue
 
             existing = session.query(MatchupFeature).filter_by(game_id=game_id).first()
             if existing is None:
-                session.add(MatchupFeature(
-                    game_id=game_id,
-                    features=features,
-                    computed_at=utc_now(),
-                ))
+                session.add(
+                    MatchupFeature(
+                        game_id=game_id,
+                        features=features,
+                        computed_at=utc_now(),
+                    )
+                )
             else:
                 existing.features = features
                 existing.computed_at = utc_now()
@@ -104,11 +113,15 @@ def main() -> None:
             elapsed = time.monotonic() - start
             rate = done / elapsed if elapsed > 0 else 0
             eta = (total - done) / rate if rate > 0 else None
-            eta_str = f"ETA {eta/3600:.1f}h" if eta else "ETA --"
+            eta_str = f"ETA {eta / 3600:.1f}h" if eta else "ETA --"
             pct = done / total
             filled = int(pct * 30)
             bar = "█" * filled + "░" * (30 - filled)
-            print(f"\r  [{bar}] {pct*100:5.1f}%  {done}/{total}  err={errors}  {eta_str}", end="", flush=True)
+            print(
+                f"\r  [{bar}] {pct * 100:5.1f}%  {done}/{total}  err={errors}  {eta_str}",
+                end="",
+                flush=True,
+            )
 
         print(f"\nDone. Built {done - errors}/{total} features  ({errors} errors)")
 

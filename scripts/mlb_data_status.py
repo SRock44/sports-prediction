@@ -3,6 +3,7 @@
 Usage:
   docker compose exec api python scripts/mlb_data_status.py
 """
+
 from __future__ import annotations
 
 import sys
@@ -34,27 +35,37 @@ def main() -> None:
         n_players = session.query(Player).filter_by(sport_id=sport.id).count()
 
         print("\nMLB Database Status")
-        print(f"{'─'*65}")
+        print(f"{'─' * 65}")
         print(f"  Teams:   {n_teams}")
         print(f"  Players: {n_players}")
         print()
-        print(f"  {'Season':<10} {'Games':>8} {'Final':>8} {'Box Scores':>12} {'Features':>10} {'Coverage':>10}")
-        print(f"  {'─'*10} {'─'*8} {'─'*8} {'─'*12} {'─'*10} {'─'*10}")
+        print(
+            f"  {'Season':<10} {'Games':>8} {'Final':>8} {'Box Scores':>12} {'Features':>10} {'Coverage':>10}"
+        )
+        print(f"  {'─' * 10} {'─' * 8} {'─' * 8} {'─' * 12} {'─' * 10} {'─' * 10}")
 
         total_games = total_final = total_bs = total_feat = 0
 
         for season_year in season_years:
-            n_games = session.query(Game).filter(
-                Game.sport_id == sport.id,
-                Game.season == season_year,
-            ).count()
+            n_games = (
+                session.query(Game)
+                .filter(
+                    Game.sport_id == sport.id,
+                    Game.season == season_year,
+                )
+                .count()
+            )
 
-            n_final = session.query(Game).filter(
-                Game.sport_id == sport.id,
-                Game.season == season_year,
-                Game.status == "final",
-                Game.meta["game_type"].astext == "R",
-            ).count()
+            n_final = (
+                session.query(Game)
+                .filter(
+                    Game.sport_id == sport.id,
+                    Game.season == season_year,
+                    Game.status == "final",
+                    Game.meta["game_type"].astext == "R",
+                )
+                .count()
+            )
 
             games_with_bs = (
                 session.query(Game.id)
@@ -63,9 +74,7 @@ def main() -> None:
                     Game.season == season_year,
                     Game.status == "final",
                     Game.meta["game_type"].astext == "R",
-                    Game.id.in_(
-                        session.query(PlayerGameStats.game_id).distinct()
-                    ),
+                    Game.id.in_(session.query(PlayerGameStats.game_id).distinct()),
                 )
                 .count()
             )
@@ -93,7 +102,7 @@ def main() -> None:
             total_bs += games_with_bs
             total_feat += games_with_feat
 
-        print(f"  {'─'*10} {'─'*8} {'─'*8} {'─'*12} {'─'*10} {'─'*10}")
+        print(f"  {'─' * 10} {'─' * 8} {'─' * 8} {'─' * 12} {'─' * 10} {'─' * 10}")
         total_cov = f"{total_bs / total_final * 100:.0f}%" if total_final > 0 else "—"
         print(
             f"  {'TOTAL':<10} {total_games:>8} {total_final:>8} {total_bs:>12} "

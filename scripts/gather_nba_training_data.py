@@ -22,6 +22,7 @@ Usage (inside Docker):
 Usage (local, with DB in Docker):
   DATABASE_URL_SYNC=postgresql://... python scripts/gather_nba_training_data.py
 """
+
 from __future__ import annotations
 
 import argparse
@@ -44,6 +45,7 @@ log = get_logger(__name__)
 
 
 # ── Progress helpers ───────────────────────────────────────────────────────────
+
 
 class Progress:
     """Simple inline progress printer — no external deps."""
@@ -96,17 +98,18 @@ def _fmt_seconds(s: float) -> str:
     if s < 60:
         return f"{s:.0f}s"
     if s < 3600:
-        return f"{s/60:.1f}m"
-    return f"{s/3600:.1f}h"
+        return f"{s / 60:.1f}m"
+    return f"{s / 3600:.1f}h"
 
 
 def _header(msg: str) -> None:
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  {msg}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
 
 # ── Phase implementations ──────────────────────────────────────────────────────
+
 
 def phase_teams_and_rosters(season_years: list[int]) -> None:
     _header("Phase 1 — Sync teams and rosters")
@@ -119,7 +122,9 @@ def phase_teams_and_rosters(season_years: list[int]) -> None:
 
     for season_year in season_years:
         with get_sync_session() as session:
-            print(f"  Rosters for {season_year}-{str(season_year+1)[-2:]}... ", end="", flush=True)
+            print(
+                f"  Rosters for {season_year}-{str(season_year + 1)[-2:]}... ", end="", flush=True
+            )
             try:
                 r = sync_players(session, season_year)
                 session.commit()
@@ -135,7 +140,7 @@ def phase_schedules(season_years: list[int]) -> dict[int, int]:
     counts: dict[int, int] = {}
 
     for season_year in season_years:
-        label = f"{season_year}-{str(season_year+1)[-2:]}"
+        label = f"{season_year}-{str(season_year + 1)[-2:]}"
         print(f"  Season {label}... ", end="", flush=True)
         try:
             with get_sync_session() as session:
@@ -176,9 +181,7 @@ def phase_box_scores(season_years: list[int]) -> None:
                 Game.sport_id == sport.id,
                 Game.status == "final",
                 Game.season.in_(season_years),
-                ~Game.id.in_(
-                    session.query(PlayerGameStats.game_id).distinct()
-                ),
+                ~Game.id.in_(session.query(PlayerGameStats.game_id).distinct()),
             )
             .order_by(Game.scheduled_utc)
             .all()
@@ -241,6 +244,7 @@ def _count_completed(season_years: list[int]) -> int:
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 
+
 def print_summary(season_years: list[int]) -> None:
     _header("Summary")
     with get_sync_session() as session:
@@ -250,19 +254,19 @@ def print_summary(season_years: list[int]) -> None:
             return
 
         for season_year in season_years:
-            label = f"{season_year}-{str(season_year+1)[-2:]}"
-            total = session.query(Game).filter(
-                Game.sport_id == sport.id, Game.season == season_year
-            ).count()
+            label = f"{season_year}-{str(season_year + 1)[-2:]}"
+            total = (
+                session.query(Game)
+                .filter(Game.sport_id == sport.id, Game.season == season_year)
+                .count()
+            )
             with_scores = (
                 session.query(Game)
                 .filter(
                     Game.sport_id == sport.id,
                     Game.season == season_year,
                     Game.status == "final",
-                    Game.id.in_(
-                        session.query(PlayerGameStats.game_id).distinct()
-                    ),
+                    Game.id.in_(session.query(PlayerGameStats.game_id).distinct()),
                 )
                 .count()
             )
@@ -271,35 +275,42 @@ def print_summary(season_years: list[int]) -> None:
     print()
     print("  Next steps:")
     print("    Build features:   docker compose exec api python scripts/build_nba_features.py")
-    print("    Train model:      docker compose exec api python -m src.cli train --sport nba --kind winner --promote")
+    print(
+        "    Train model:      docker compose exec api python -m src.cli train --sport nba --kind winner --promote"
+    )
     print("    Score upcoming:   docker compose exec api python -m src.cli score --sport nba")
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Gather historical NBA training data from stats.nba.com"
     )
     parser.add_argument(
-        "--seasons", type=int, default=5,
-        help="Number of past seasons to gather (default: 5)"
+        "--seasons", type=int, default=5, help="Number of past seasons to gather (default: 5)"
     )
     parser.add_argument(
-        "--season-start", type=int, default=None,
-        help="Oldest season year to include (e.g. 2020). Overrides --seasons."
+        "--season-start",
+        type=int,
+        default=None,
+        help="Oldest season year to include (e.g. 2020). Overrides --seasons.",
     )
     parser.add_argument(
-        "--skip-rosters", action="store_true",
-        help="Skip roster sync (faster if you only need game data)"
+        "--skip-rosters",
+        action="store_true",
+        help="Skip roster sync (faster if you only need game data)",
     )
     parser.add_argument(
-        "--skip-box-scores", action="store_true",
-        help="Only ingest schedules, skip box score fetching"
+        "--skip-box-scores",
+        action="store_true",
+        help="Only ingest schedules, skip box score fetching",
     )
     parser.add_argument(
-        "--box-scores-only", action="store_true",
-        help="Skip phases 1+2, only fetch missing box scores"
+        "--box-scores-only",
+        action="store_true",
+        help="Skip phases 1+2, only fetch missing box scores",
     )
     args = parser.parse_args()
 
@@ -314,7 +325,7 @@ def main() -> None:
     season_years = list(range(season_start, current_season + 1))
 
     print("\nNBA Training Data Gatherer")
-    print(f"Target seasons: {[f'{y}-{str(y+1)[-2:]}' for y in season_years]}")
+    print(f"Target seasons: {[f'{y}-{str(y + 1)[-2:]}' for y in season_years]}")
     print("Source:         stats.nba.com (free, unofficial endpoint)")
     print("Rate limit:     1 req/sec (enforced)")
     print()

@@ -1,7 +1,9 @@
 """Quick health check: models, training data, predictions, upcoming games."""
-from src.db.session import sync_session_factory
-from src.db.models import ModelRecord, Sport
+
 from sqlalchemy import text
+
+from src.db.models import ModelRecord, Sport
+from src.db.session import sync_session_factory
 
 with sync_session_factory() as s:
     for code in ("nba", "mlb"):
@@ -55,7 +57,7 @@ with sync_session_factory() as s:
         ).scalar()
 
         model_str = f"{m.mlflow_run_id[:8]} v{m.version}" if m else "NO ACTIVE MODEL"
-        print(f"\n{'='*40}")
+        print(f"\n{'=' * 40}")
         print(f"  {code.upper()}")
         print(f"  Champion model : {model_str}")
         print(f"  Matchup features: {n_mf:,} rows (training data)")
@@ -65,11 +67,12 @@ with sync_session_factory() as s:
 
     # Also check recent training logs
     import os
+
     log_path = "/app/reports/training_log.md"
     if os.path.exists(log_path):
         with open(log_path) as f:
             lines = f.readlines()
-        print(f"\n{'='*40}")
+        print(f"\n{'=' * 40}")
         print("  Last 20 lines of training_log.md:")
-        for l in lines[-20:]:
-            print(" ", l.rstrip())
+        for line in lines[-20:]:
+            print(" ", line.rstrip())
