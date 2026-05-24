@@ -30,13 +30,21 @@ def score_upcoming_games(session: Session, sport_code: str, hours_ahead: int = 4
         log.error("score.sport_not_found", sport=sport_code)
         return 0
 
+    _BETTABLE_STATUSES = [
+        "scheduled",
+        "pre-game",
+        "in progress",
+        "in_progress_inning_1",
+        "delayed",
+        "delayed start",
+    ]
     games = (
         session.query(Game)
         .filter(
             Game.sport_id == sport.id,
-            Game.scheduled_utc >= now,
+            Game.scheduled_utc >= now - timedelta(hours=4),
             Game.scheduled_utc <= window_end,
-            Game.status.in_(["scheduled", "pre-game"]),
+            Game.status.in_(_BETTABLE_STATUSES),
         )
         .all()
     )
@@ -98,7 +106,24 @@ def _score_game_winner(
     X = np.array([[features.get(n, 0.0) for n in feature_names_raw]], dtype=np.float32)
     proba_home_win = float(model.predict_proba(X)[0, 1])
 
-    features_hash = _hash_features(features)
+    # Per-feature SHAP-style leaf contributions — stored in audit for "got it right" posts.
+    # XGBoost pred_contribs gives (n_samples, n_features+1); last col is bias.
+    try:
+        import xgboost as xgb
+
+        dm = xgb.DMatrix(X, feature_names=feature_names_raw)
+        raw_contribs = model.xgb_clf.get_booster().predict(dm, pred_contribs=True)
+        contrib_dict = {
+            feature_names_raw[i]: float(raw_contribs[0, i]) for i in range(len(feature_names_raw))
+        }
+        top_contribs = dict(
+            sorted(contrib_dict.items(), key=lambda kv: abs(kv[1]), reverse=True)[:10]
+        )
+        features["_contribs"] = top_contribs
+    except Exception as exc:
+        log.warning("score.contribs_failed", game_id=game.id, error=str(exc))
+
+    features_hash = _hash_features({k: v for k, v in features.items() if not k.startswith("_")})
 
     # Upsert prediction
     existing = (

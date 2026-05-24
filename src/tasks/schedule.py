@@ -128,4 +128,24 @@ BEAT_SCHEDULE = {
         "schedule": crontab(hour=5, minute=30, day_of_month=1),
         "kwargs": {"sport": "mlb"},
     },
+    # ── Daily top-10 picks post (14:00 UTC — after scoring completes) ─────────
+    "post-daily-picks-nba": {
+        "task": "src.tasks.outcome_tasks.post_daily_picks",
+        "schedule": crontab(hour=14, minute=0),
+        "kwargs": {"sport": "nba"},
+    },
+    "post-daily-picks-mlb": {
+        "task": "src.tasks.outcome_tasks.post_daily_picks",
+        "schedule": crontab(hour=14, minute=30),
+        "kwargs": {"sport": "mlb"},
+    },
+    # ── Outcome checks (every 5 min 18:00-05:00 UTC — NBA/MLB game windows) ───
+    "check-outcomes-nba": {
+        "task": "src.tasks.outcome_tasks.check_outcomes_nba",
+        "schedule": crontab(minute="*/5", hour="18-23,0-5"),
+    },
+    "check-outcomes-mlb": {
+        "task": "src.tasks.outcome_tasks.check_outcomes_mlb",
+        "schedule": crontab(minute="*/5", hour="18-23,0-5"),
+    },
 }
