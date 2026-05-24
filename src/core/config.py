@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     telegram_chat_id_nba: str | None = None
     telegram_chat_id_mlb: str | None = None
 
+    # ── Discord interactive bot ────────────────────────────────────────────────
+    discord_bot_token: SecretStr | None = None
+    discord_guild_id: str | None = None  # for instant slash-command sync; global if unset
+
     # ── Backfill ──────────────────────────────────────────────────────────────
     nba_backfill_seasons: int = 5
     mlb_backfill_seasons: int = 5

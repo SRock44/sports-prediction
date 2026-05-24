@@ -96,16 +96,22 @@ services:
 
   beat:
     <<: *app-base
-    command: celery -A src.tasks.celery_app beat --loglevel=info --scheduler celery.beat:PersistentScheduler
+    command: celery -A src.tasks.celery_app beat --loglevel=info
     volumes:
       - mlruns:/app/mlruns
       - reports:/app/reports
       - pybaseball_cache:/tmp/pybaseball_cache
-      - beat_schedule:/app/celerybeat-schedule
 
   notifier:
     <<: *app-base
     command: python -m src.notify.listener
+
+  discord-bot:
+    <<: *app-base
+    command: python -m src.notify.discord_bot
+    deploy:
+      resources:
+        reservations: {}
 
   # ── Reverse proxy ────────────────────────────────────────────────────────
   caddy:

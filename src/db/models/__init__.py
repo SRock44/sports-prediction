@@ -2,6 +2,7 @@
 
 from src.db.models.auth import ApiKey, ApiRequest
 from src.db.models.base import Base
+from src.db.models.discord_parlay import DiscordParlay
 from src.db.models.odds import GameOdds, GameWeather
 from src.db.models.prediction import (
     DriftEvent,
@@ -29,6 +30,7 @@ __all__ = [
     "ApiKey",
     "ApiRequest",
     "Base",
+    "DiscordParlay",
     "DriftEvent",
     "Game",
     "GameOdds",
