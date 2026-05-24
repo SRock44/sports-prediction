@@ -25,6 +25,7 @@ app = Celery(
         "src.tasks.feature_tasks",
         "src.tasks.train_tasks",
         "src.tasks.score_tasks",
+        "src.tasks.outcome_tasks",
     ],
 )
 
@@ -42,6 +43,7 @@ app.conf.update(
         "src.tasks.ingest_tasks.*": {"queue": "default"},
         "src.tasks.feature_tasks.*": {"queue": "default"},
         "src.tasks.score_tasks.*": {"queue": "default"},
+        "src.tasks.outcome_tasks.*": {"queue": "default"},
         # Tasks that need the high_priority queue pass queue= explicitly via apply_async.
     },
     beat_schedule_filename="celerybeat-schedule",

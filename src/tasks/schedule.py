@@ -8,6 +8,17 @@ from __future__ import annotations
 from celery.schedules import crontab
 
 BEAT_SCHEDULE = {
+    # ── Daily schedule refresh (3:00 AM EST / 8:00 AM UTC) ──────────────────────
+    # Runs before the 4 AM ingest chain so upcoming games exist when scoring fires.
+    "ingest-schedule-nba": {
+        "task": "src.tasks.ingest_tasks.ingest_schedule_nba",
+        "schedule": crontab(hour=8, minute=0),  # 3:00 AM EST
+        "kwargs": {"days_ahead": 7},
+    },
+    "ingest-schedule-mlb": {
+        "task": "src.tasks.ingest_tasks.ingest_schedule_mlb",
+        "schedule": crontab(hour=8, minute=0),  # 3:00 AM EST (parallel)
+    },
     # ── Daily ingest (4:00 AM EST / 9:00 AM UTC — box scores finalized) ────────
     "ingest-nba-yesterday": {
         "task": "src.tasks.ingest_tasks.ingest_yesterday_nba",

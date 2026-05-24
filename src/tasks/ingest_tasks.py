@@ -125,6 +125,32 @@ def poll_live_mlb() -> dict:
     return result
 
 
+@shared_task(name="src.tasks.ingest_tasks.ingest_schedule_nba", bind=True, max_retries=2)
+def ingest_schedule_nba(self: Any, days_ahead: int = 7) -> dict:
+    """Upsert upcoming NBA games (ScoreboardV2 for each of the next N days)."""
+    from src.ingest.nba.games import ingest_upcoming_nba_schedule
+
+    with sync_session_factory() as session:
+        result = ingest_upcoming_nba_schedule(session, days_ahead=days_ahead)
+        session.commit()
+    return {"inserted": result.rows_inserted, "updated": result.rows_updated}
+
+
+@shared_task(name="src.tasks.ingest_tasks.ingest_schedule_mlb", bind=True, max_retries=2)
+def ingest_schedule_mlb(self: Any, days_ahead: int = 7) -> dict:
+    """Upsert upcoming MLB games (re-fetches the rest of the current season schedule)."""
+    from datetime import date
+
+    from src.core.time import mlb_season_for_date
+    from src.ingest.mlb.games import ingest_season_schedule
+
+    season = mlb_season_for_date(date.today())
+    with sync_session_factory() as session:
+        result = ingest_season_schedule(session, season)
+        session.commit()
+    return {"inserted": result.rows_inserted, "updated": result.rows_updated}
+
+
 @shared_task(name="src.tasks.ingest_tasks.ingest_odds_open", bind=True, max_retries=2)
 def ingest_odds_open(self: Any) -> dict:
     """Fetch opening lines from DraftKings, FanDuel, and Kalshi (~24h before tip-off)."""
