@@ -25,8 +25,10 @@ def update_live_scores(session: Session) -> dict[str, Any]:
     from src.core.time import utc_now
 
     now = utc_now()
-    window_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    window_start = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=12)
     window_end = now + timedelta(hours=6)
+
+    from sqlalchemy import or_
 
     active_games = (
         session.query(Game)
@@ -34,7 +36,10 @@ def update_live_scores(session: Session) -> dict[str, Any]:
             Game.sport_id == sport.id,
             Game.scheduled_utc >= window_start,
             Game.scheduled_utc <= window_end,
-            Game.status.in_(["scheduled", "pre-game", "in_progress", "warmup"]),
+            or_(
+                Game.status.in_(["scheduled", "pre-game", "in_progress", "in progress", "warmup", "delayed", "delayed start"]),
+                Game.status.like("in_progress_%"),
+            ),
         )
         .all()
     )
