@@ -45,6 +45,8 @@ def ingest_odds(
 
     for game_data in consensus_games:
         game = _match_game(session, sport, game_data)
+        if game is None and sport_code.lower() == "nba":
+            game = _create_nba_game_from_odds(session, sport, game_data)
         if game is None:
             continue
 
@@ -213,6 +215,71 @@ def _match_game(session: Session, sport: Any, game_data: dict[str, Any]) -> Game
 def _norm(name: str) -> str:
     parts = str(name).strip().lower().split()
     return parts[-1] if parts else ""
+
+
+def _find_team_by_name(session: Any, sport_id: int, name: str) -> Any:
+    """Look up a Team by the last word of its name (e.g. 'Pacers' matches 'Indiana Pacers')."""
+    from src.db.models import Team
+
+    last = _norm(name)
+    return (
+        session.query(Team).filter(Team.sport_id == sport_id, Team.name.ilike(f"%{last}%")).first()
+    )
+
+
+def _create_nba_game_from_odds(session: Any, sport: Any, game_data: dict[str, Any]) -> Any:
+    """Seed a Game record from DK odds when nba.com is unreachable from this server."""
+    from src.core.time import nba_season_for_date
+    from src.db.models import Game
+
+    home_name = game_data.get("home_team", "")
+    away_name = game_data.get("away_team", "")
+    commence = game_data.get("commence_time", "")
+    if not (home_name and away_name and commence):
+        return None
+
+    try:
+        game_dt = datetime.fromisoformat(str(commence).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+    home_team = _find_team_by_name(session, sport.id, home_name)
+    away_team = _find_team_by_name(session, sport.id, away_name)
+    if home_team is None or away_team is None:
+        log.warning("odds.nba_game_create.team_not_found", home=home_name, away=away_name)
+        return None
+
+    # Check again by time window + team IDs to avoid duplicates
+    from datetime import timedelta
+
+    existing = (
+        session.query(Game)
+        .filter(
+            Game.sport_id == sport.id,
+            Game.home_team_id == home_team.id,
+            Game.away_team_id == away_team.id,
+            Game.scheduled_utc >= game_dt - timedelta(hours=12),
+            Game.scheduled_utc <= game_dt + timedelta(hours=12),
+        )
+        .first()
+    )
+    if existing:
+        return existing
+
+    season = nba_season_for_date(game_dt.date())
+    game = Game(
+        sport_id=sport.id,
+        external_id=f"odds_{home_team.abbrev}_{game_dt.strftime('%Y%m%d')}",
+        season=season,
+        scheduled_utc=game_dt,
+        status="scheduled",
+        home_team_id=home_team.id,
+        away_team_id=away_team.id,
+    )
+    session.add(game)
+    session.flush()
+    log.info("odds.nba_game_created", home=home_name, away=away_name, game_id=game.id)
+    return game
 
 
 def _prob_to_american(prob: float) -> float:
