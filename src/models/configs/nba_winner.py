@@ -30,7 +30,7 @@ NBA_WINNER_FEATURES = [
     "home_four_in_six",
     "home_home_win_pct",
     "home_away_win_pct",
-    "home_overall_win_pct_last10",
+    "home_win_pct_last10",
     "home_travel_km",
     "home_starter_availability",
     # ── Away team ─────────────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ NBA_WINNER_FEATURES = [
     "away_four_in_six",
     "away_home_win_pct",
     "away_away_win_pct",
-    "away_overall_win_pct_last10",
+    "away_win_pct_last10",
     "away_travel_km",
     "away_starter_availability",
     # ── Matchup / cross features ──────────────────────────────────────────────
