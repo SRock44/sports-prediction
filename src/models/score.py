@@ -126,16 +126,13 @@ def _score_game_winner(
     features_hash = _hash_features({k: v for k, v in features.items() if not k.startswith("_")})
 
     # Upsert prediction
-    existing = (
-        session.query(Prediction)
-        .filter_by(
-            game_id=game.id,
-            model_id=model_record.id,
-            target="home_won",
-            player_id=None,
-        )
-        .first()
+    _filter = dict(
+        game_id=game.id,
+        model_id=model_record.id,
+        target="home_won",
+        player_id=None,
     )
+    existing = session.query(Prediction).filter_by(**_filter).first()
 
     now = utc_now()
     if existing is None:
@@ -149,8 +146,23 @@ def _score_game_winner(
             features_hash=features_hash,
             created_at=now,
         )
-        session.add(pred)
-        session.flush()
+        try:
+            from sqlalchemy.exc import IntegrityError
+
+            with session.begin_nested():
+                session.add(pred)
+                session.flush()
+        except IntegrityError:
+            # Race condition: another worker inserted between our SELECT and INSERT.
+            # Re-fetch and fall through to the update path.
+            existing = session.query(Prediction).filter_by(**_filter).first()
+            if existing is None:
+                return 0
+            existing.probability = Decimal(str(round(proba_home_win, 4)))
+            existing.value = Decimal(str(round(proba_home_win, 4)))
+            existing.features_hash = features_hash
+            existing.created_at = now
+            return 1
 
         audit = PredictionAudit(
             prediction_id=pred.id,
