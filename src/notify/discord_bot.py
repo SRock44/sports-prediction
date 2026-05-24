@@ -154,35 +154,43 @@ async def mypicks(interaction: discord.Interaction) -> None:
                 .limit(20)
                 .all()
             )
+
+            if not picks:
+                await interaction.followup.send(
+                    "You haven't locked in any picks yet.", ephemeral=True
+                )
+                return
+
+            lines = []
+            pending = won = lost = 0
+            for p in picks:
+                if p.status == "pending":
+                    pending += 1
+                elif p.status == "won":
+                    won += 1
+                elif p.status == "lost":
+                    lost += 1
+                status_emoji = {"pending": "⏳", "won": "✅", "lost": "❌", "push": "➖"}.get(  # noqa: RUF001
+                    p.status, "❓"
+                )
+                legs_summary = []
+                for leg in p.legs or []:
+                    team = (
+                        leg.get("home_team") if leg.get("pick") == "home" else leg.get("away_team")
+                    )
+                    odds = leg.get("odds_american", 0)
+                    odds_str = f"+{odds}" if odds > 0 else str(odds)
+                    legs_summary.append(f"{team} ({odds_str})")
+                sport_icon = "🏀" if p.sport_code == "nba" else "⚾"
+                ev = p.parlay_ev or 0
+                lines.append(
+                    f"{status_emoji} {sport_icon} **{' + '.join(legs_summary)}** "
+                    f"· {p.n_legs}-leg · EV ${ev:+.0f}/100 · _{p.created_at.strftime('%b %-d')}_"
+                )
     except Exception as exc:
         log.error("discord.mypicks_failed", error=str(exc))
         await interaction.followup.send("⚠️ Couldn't load your picks.", ephemeral=True)
         return
-
-    if not picks:
-        await interaction.followup.send("You haven't locked in any picks yet.", ephemeral=True)
-        return
-
-    lines = []
-    for p in picks:
-        status_emoji = {"pending": "⏳", "won": "✅", "lost": "❌", "push": "➖"}.get(  # noqa: RUF001
-            p.status, "❓"
-        )
-        legs_summary = []
-        for leg in p.legs or []:
-            team = leg.get("home_team") if leg.get("pick") == "home" else leg.get("away_team")
-            odds = leg.get("odds_american", 0)
-            odds_str = f"+{odds}" if odds > 0 else str(odds)
-            legs_summary.append(f"{team} ({odds_str})")
-        sport_icon = "🏀" if p.sport_code == "nba" else "⚾"
-        lines.append(
-            f"{status_emoji} {sport_icon} **{' + '.join(legs_summary)}** "
-            f"· {p.n_legs}-leg · EV ${p.parlay_ev:+.0f}/100 · _{p.created_at.strftime('%b %-d')}_"
-        )
-
-    pending = sum(1 for p in picks if p.status == "pending")
-    won = sum(1 for p in picks if p.status == "won")
-    lost = sum(1 for p in picks if p.status == "lost")
 
     embed = discord.Embed(
         title=f"📋 {interaction.user.display_name}'s Picks",
