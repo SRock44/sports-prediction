@@ -103,10 +103,23 @@ def on_task_done(task_id: str, task, args, kwargs, retval, state: str, **_):
     elapsed = time.monotonic() - _task_start.pop(task_id, time.monotonic())
     name = _short_name(task.name)
     if state == "SUCCESS":
+        description = f"Finished in {elapsed:.1f}s"
+        # For train_props: retval is {stat: {run_id, mae} | "error: ..."} — show per-stat MAE
+        if name == "train_props" and isinstance(retval, dict):
+            sport = (kwargs or {}).get("sport", "?")
+            lines = [f"sport={sport}  elapsed={elapsed:.0f}s"]
+            for stat, result in sorted(retval.items()):
+                if isinstance(result, dict):
+                    mae = result.get("mae", "?")
+                    run = result.get("run_id", "?")
+                    lines.append(f"  `{stat:<12}` MAE `{mae}`  run `{run}`")
+                else:
+                    lines.append(f"  `{stat:<12}` {result}")
+            description = "\n".join(lines)
         _fire(
             {
                 "title": f"✅  SUCCEEDED  ·  {name}",
-                "description": f"Finished in {elapsed:.1f}s",
+                "description": description,
                 "color": 0x57F287,  # green
                 "footer": {"text": _ts()},
             }
