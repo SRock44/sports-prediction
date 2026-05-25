@@ -80,6 +80,17 @@ BEAT_SCHEDULE = {
         "schedule": crontab(hour=12, minute=45),  # 7:45 AM EST (parallel)
         "kwargs": {"sport": "mlb", "kind": "winner"},
     },
+    # ── Props model training (7:55 AM EST / 12:55 PM UTC — after champion refresh) ─
+    "train-props-nba": {
+        "task": "src.tasks.train_tasks.train_props",
+        "schedule": crontab(hour=12, minute=55),  # 7:55 AM EST
+        "kwargs": {"sport": "nba"},
+    },
+    "train-props-mlb": {
+        "task": "src.tasks.train_tasks.train_props",
+        "schedule": crontab(hour=12, minute=55),  # 7:55 AM EST (parallel)
+        "kwargs": {"sport": "mlb"},
+    },
     # ── Score upcoming games (8:00 AM EST / 1:00 PM UTC) ─────────────────────
     # Runs after champion refresh — picks use today's fresh champion model.
     "score-nba": {
@@ -89,6 +100,35 @@ BEAT_SCHEDULE = {
     "score-mlb": {
         "task": "src.tasks.score_tasks.score_mlb_upcoming",
         "schedule": crontab(hour=13, minute=0),  # 8:00 AM EST (parallel)
+    },
+    # ── Props scoring (8:15 AM EST / 1:15 PM UTC — after game scoring + DK lines open) ─
+    # Also every 30 min 10 AM-5 PM EST as lineups/lines update
+    "score-props-nba": {
+        "task": "src.tasks.score_tasks.score_props_upcoming_nba",
+        "schedule": crontab(hour=13, minute=15),  # 8:15 AM EST
+    },
+    "score-props-mlb": {
+        "task": "src.tasks.score_tasks.score_props_upcoming_mlb",
+        "schedule": crontab(hour=13, minute=15),  # 8:15 AM EST (parallel)
+    },
+    "rescore-props-nba": {
+        "task": "src.tasks.score_tasks.score_props_upcoming_nba",
+        "schedule": crontab(minute="*/30", hour="15-22"),  # 10 AM-5 PM EST
+    },
+    "rescore-props-mlb": {
+        "task": "src.tasks.score_tasks.score_props_upcoming_mlb",
+        "schedule": crontab(minute="*/30", hour="17-23"),  # 12 PM-6 PM EST
+    },
+    # ── Daily top props post (8:30 AM EST / 1:30 PM UTC — after scoring + lines open) ──
+    "post-daily-props-nba": {
+        "task": "src.tasks.outcome_tasks.post_daily_props",
+        "schedule": crontab(hour=13, minute=30),  # 8:30 AM EST
+        "kwargs": {"sport": "nba"},
+    },
+    "post-daily-props-mlb": {
+        "task": "src.tasks.outcome_tasks.post_daily_props",
+        "schedule": crontab(hour=14, minute=0),  # 9:00 AM EST (same time as game picks)
+        "kwargs": {"sport": "mlb"},
     },
     # ── Odds (opening lines 2:00 PM UTC / 9:00 AM EST, close 10:00 PM UTC / 5:00 PM EST)
     "ingest-odds-open": {
