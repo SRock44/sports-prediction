@@ -167,22 +167,45 @@ def train(
                 typer.echo(f"  Not promoted: {reason}")
 
     elif kind == "props":
+        from src.db.models import Sport as SportModel
+        from src.features.common import feature_spec_hash as compute_fsh
+        from src.models.registry import promote_model
         from src.models.train_props import train_props_model
+
+        with get_sync_session() as session:
+            sport_obj = session.query(SportModel).filter_by(code=sport).first()
+            sport_id = sport_obj.id if sport_obj else None
+
+        if sport_id is None:
+            typer.echo(f"Sport '{sport}' not found in DB.", err=True)
+            raise typer.Exit(1)
 
         for stat in _props_stats(sport):
             typer.echo(f"  Prop stat: {stat}…", nl=False)
             try:
-                prop_df = training_df[training_df["target"] == stat]
-                hold_df = holdout_df[holdout_df["target"] == stat]
+                with get_sync_session() as prop_session:
+                    prop_df, hold_df, prop_feature_names = _load_props_training_data(
+                        prop_session, sport, stat
+                    )
                 if prop_df.empty:
                     typer.echo(" no data, skip")
                     continue
-                prop_feature_names = [
-                    c for c in prop_df.columns if c not in ("target", "y", "game_date", "season")
-                ]
+                typer.echo(f" {len(prop_df)} train / {len(hold_df)} holdout rows…", nl=False)
                 run_id, metrics = train_props_model(
                     sport, stat, prop_df, prop_feature_names, hold_df
                 )
+                with get_sync_session() as session:
+                    promote_model(
+                        session,
+                        run_id,
+                        sport_id,
+                        kind="props",
+                        target=stat,
+                        version=run_id[:12],
+                        metrics=metrics,
+                        feature_spec_hash=compute_fsh(prop_feature_names),
+                    )
+                    session.commit()
                 typer.echo(f" done run={run_id[:8]} mae={metrics.get('mae_median', '?'):.3f}")
             except Exception as exc:
                 typer.echo(f" ERROR: {exc}", err=True)
@@ -192,7 +215,7 @@ def _props_stats(sport: str) -> list[str]:
     if sport == "nba":
         return ["PTS", "REB", "AST", "3PM", "PRA"]
     elif sport == "mlb":
-        return ["H", "HR", "TB", "RBI", "K", "PITCHER_K", "PITCHER_ER"]
+        return ["H", "HR", "TB", "RBI", "PITCHER_K", "PITCHER_ER"]
     return []
 
 
@@ -258,6 +281,186 @@ def _load_training_data(
 
     feature_names = [c for c in df.columns if c not in ("y", "game_date", "season")]
     return training_df, holdout_df, feature_names
+
+
+def _nba_stat_sql(stat: str) -> str:
+    """SQL expression to extract NBA stat value from player_game_stats.stats JSONB."""
+    mapping = {
+        "PTS": "stats->'traditional'->>'points'",
+        "REB": "stats->'traditional'->>'reboundsTotal'",
+        "AST": "stats->'traditional'->>'assists'",
+        "3PM": "stats->'traditional'->>'threePointersMade'",
+        "PRA": (
+            "COALESCE((stats->'traditional'->>'points')::float, 0) + "
+            "COALESCE((stats->'traditional'->>'reboundsTotal')::float, 0) + "
+            "COALESCE((stats->'traditional'->>'assists')::float, 0)"
+        ),
+    }
+    return mapping.get(stat, "NULL")
+
+
+def _mlb_stat_sql(stat: str) -> tuple[str, str]:
+    """SQL expressions (target_sql, minutes_sql) for MLB player stats."""
+    batter = {
+        "H": "stats->'batting'->>'hits'",
+        "HR": "stats->'batting'->>'homeRuns'",
+        "TB": "stats->'batting'->>'totalBases'",
+        "RBI": "stats->'batting'->>'rbi'",
+        "K": "stats->'batting'->>'strikeOuts'",
+    }
+    pitcher = {
+        "PITCHER_K": "stats->'pitching'->>'strikeOuts'",
+        "PITCHER_ER": "stats->'pitching'->>'earnedRuns'",
+    }
+    if stat in batter:
+        return batter[stat], "'9'"
+    if stat in pitcher:
+        return pitcher[stat], "stats->'pitching'->>'inningsPitched'"
+    return "NULL", "'0'"
+
+
+def _parse_minutes_str(m: str | None) -> float:
+    """Parse 'MM:SS' or decimal string to float minutes."""
+    try:
+        if m and ":" in str(m):
+            parts = str(m).split(":")
+            return float(parts[0]) + float(parts[1]) / 60.0
+        return float(m) if m else 0.0
+    except (ValueError, TypeError, IndexError):
+        return 0.0
+
+
+def _load_props_training_data(
+    session: Any,
+    sport: str,
+    stat: str,
+) -> tuple[Any, Any, list[str]]:
+    """Load training + holdout DataFrames for a player prop stat.
+
+    Pulls raw player-game rows from player_game_stats, computes rolling features
+    in pandas (matching build_player_features output), and returns:
+      training_df, holdout_df, feature_names
+    One row per (player, game); target = actual stat value in that game.
+    """
+    import numpy as np
+    import pandas as pd
+    from sqlalchemy import text
+
+    from src.db.models import Sport as SportModel
+
+    sport_obj = session.query(SportModel).filter_by(code=sport).first()
+    if sport_obj is None:
+        return pd.DataFrame(), pd.DataFrame(), []
+
+    if sport == "nba":
+        target_expr = _nba_stat_sql(stat)
+        min_expr = "stats->'traditional'->>'minutes'"
+    else:
+        target_expr, min_expr = _mlb_stat_sql(stat)
+
+    if target_expr == "NULL":
+        return pd.DataFrame(), pd.DataFrame(), []
+
+    q = text(f"""
+        SELECT
+            pgs.player_id,
+            g.id           AS game_id,
+            g.scheduled_utc,
+            g.season,
+            CASE WHEN pgs.team_id = g.home_team_id THEN 1.0 ELSE 0.0 END AS is_home,
+            ({target_expr})::float    AS target_val,
+            ({min_expr})::text        AS minutes_raw
+        FROM player_game_stats pgs
+        JOIN games  g  ON g.id  = pgs.game_id
+        JOIN sports sp ON sp.id = g.sport_id
+        WHERE sp.code = :sport
+          AND g.status = 'final'
+          AND ({target_expr}) IS NOT NULL
+        ORDER BY pgs.player_id, g.scheduled_utc
+    """)
+    rows = session.execute(q, {"sport": sport}).mappings().all()
+    if not rows:
+        return pd.DataFrame(), pd.DataFrame(), []
+
+    df = pd.DataFrame(rows)
+    df["minutes"] = df["minutes_raw"].apply(_parse_minutes_str)
+    # Filter out DNP rows (< 5 min played) — not useful training signal
+    df = df[df["minutes"] >= 5].copy()
+    if df.empty:
+        return pd.DataFrame(), pd.DataFrame(), []
+
+    df["per_min"] = np.where(df["minutes"] > 0, df["target_val"] / df["minutes"], 0.0)
+    df = df.sort_values(["player_id", "scheduled_utc"]).reset_index(drop=True)
+
+    # Rolling features — shift(1) ensures we only use prior games (no leakage)
+    grp = df.groupby("player_id", sort=False)
+
+    def _roll_mean(s: Any, w: int) -> Any:
+        return s.shift(1).rolling(w, min_periods=1).mean()
+
+    def _roll_std(s: Any, w: int) -> Any:
+        return s.shift(1).rolling(w, min_periods=3).std().fillna(0.0)
+
+    for w in [5, 10, 20]:
+        df[f"{stat}_last{w}"] = grp["target_val"].transform(lambda s, w=w: _roll_mean(s, w))
+        df[f"{stat}_per_min_last{w}"] = grp["per_min"].transform(lambda s, w=w: _roll_mean(s, w))
+
+    df[f"{stat}_std_last10"] = grp["target_val"].transform(lambda s: _roll_std(s, 10))
+    df["minutes_last5"] = grp["minutes"].transform(lambda s: _roll_mean(s, 5)).fillna(20.0)
+    df["minutes_last10"] = grp["minutes"].transform(lambda s: _roll_mean(s, 10)).fillna(20.0)
+
+    # Rest days (days since last game, capped at 10)
+    df["prev_utc"] = grp["scheduled_utc"].transform(lambda s: s.shift(1))
+    df["rest_days"] = (
+        (pd.to_datetime(df["scheduled_utc"]) - pd.to_datetime(df["prev_utc"]))
+        .dt.total_seconds()
+        .div(86400)
+        .clip(0, 10)
+        .fillna(2.0)
+    )
+
+    # Game number within player's history (for cold-start weight)
+    df["_game_num"] = grp.cumcount()
+    df["season_game_weight"] = (df["_game_num"] / 20.0).clip(0, 1.0)
+
+    # Static placeholders matching build_player_features output
+    df["home_away_split"] = df["is_home"]
+    df["opp_def_rtg_at_pos"] = 0.0
+    df["injury_status"] = 1.0
+    df["target"] = df["target_val"]
+
+    # Require at least 10 prior games for meaningful rolling features
+    df = df[df["_game_num"] >= 10].copy()
+    if df.empty:
+        return pd.DataFrame(), pd.DataFrame(), []
+
+    feature_cols = [
+        f"{stat}_last5",
+        f"{stat}_last10",
+        f"{stat}_last20",
+        f"{stat}_per_min_last5",
+        f"{stat}_per_min_last10",
+        f"{stat}_per_min_last20",
+        f"{stat}_std_last10",
+        "minutes_last5",
+        "minutes_last10",
+        "home_away_split",
+        "opp_def_rtg_at_pos",
+        "rest_days",
+        "injury_status",
+        "season_game_weight",
+    ]
+
+    # Holdout = most recent season; training = everything before it
+    max_season = df["season"].max()
+    train_df = df[df["season"] < max_season].copy()
+    hold_df = df[df["season"] == max_season].copy()
+    if train_df.empty:
+        cutoff = pd.to_datetime(df["scheduled_utc"]).max() - pd.Timedelta(weeks=8)
+        train_df = df[pd.to_datetime(df["scheduled_utc"]) <= cutoff].copy()
+        hold_df = df[pd.to_datetime(df["scheduled_utc"]) > cutoff].copy()
+
+    return train_df, hold_df, feature_cols
 
 
 # ── Eval ──────────────────────────────────────────────────────────────────────

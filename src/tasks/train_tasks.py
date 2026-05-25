@@ -518,6 +518,63 @@ def retrain_champion(sport: str, kind: str = "winner") -> dict:
     return {"status": "promoted", "new_logloss": new_logloss, "run_id": run_id}
 
 
+def train_props(sport: str) -> dict:
+    """Daily: retrain props models for all stats and promote winners to active."""
+    from src.db.models import Sport as SportModel
+    from src.db.session import sync_session_factory
+    from src.features.common import feature_spec_hash as compute_fsh
+    from src.models.registry import promote_model
+    from src.models.train_props import train_props_model
+
+    stats = {
+        "nba": ["PTS", "REB", "AST", "3PM", "PRA"],
+        "mlb": ["H", "TB", "HR", "RBI", "PITCHER_K", "PITCHER_ER"],
+    }
+    targets = stats.get(sport, [])
+
+    with sync_session_factory() as session:
+        sport_obj = session.query(SportModel).filter_by(code=sport).first()
+        sport_id = sport_obj.id if sport_obj else None
+
+    if sport_id is None:
+        return {"status": "error", "reason": f"sport {sport} not found"}
+
+    results = {}
+    for stat in targets:
+        try:
+            from src.cli import _load_props_training_data
+
+            with sync_session_factory() as session:
+                train_df, hold_df, feat_names = _load_props_training_data(session, sport, stat)
+
+            if train_df.empty:
+                results[stat] = "no_data"
+                continue
+
+            run_id, metrics = train_props_model(sport, stat, train_df, feat_names, hold_df)
+
+            with sync_session_factory() as session:
+                promote_model(
+                    session,
+                    run_id,
+                    sport_id,
+                    "props",
+                    stat,
+                    run_id[:12],
+                    metrics,
+                    compute_fsh(feat_names),
+                )
+                session.commit()
+
+            results[stat] = {"run_id": run_id[:8], "mae": round(metrics.get("mae_median", 0), 3)}
+            log.info("train_props.done", sport=sport, stat=stat, **metrics)
+        except Exception as exc:
+            log.error("train_props.failed", sport=sport, stat=stat, error=str(exc))
+            results[stat] = f"error: {exc}"
+
+    return {"sport": sport, "results": results}
+
+
 # Register as Celery tasks
 from src.tasks.celery_app import app  # noqa: E402
 
@@ -539,3 +596,4 @@ hyperparam_search = app.task(name="src.tasks.train_tasks.hyperparam_search", bin
 retrain_champion = app.task(name="src.tasks.train_tasks.retrain_champion", bind=False)(
     retrain_champion
 )
+train_props = app.task(name="src.tasks.train_tasks.train_props", bind=False)(train_props)
