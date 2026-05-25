@@ -11,23 +11,18 @@ log = get_logger(__name__)
 
 
 def _locked_game_ids(user_id: str) -> set[int]:
-    """Return all game_ids this user has already locked picks for in the last 24h."""
-    from datetime import timedelta
+    """Return all game_ids this user has already locked picks for (no time limit).
 
-    from src.core.time import utc_now
+    A game should never be locked twice by the same user regardless of when the
+    first pick was made — checked at both generate time and lock-in time.
+    """
     from src.db.models.discord_parlay import DiscordParlay
     from src.db.session import get_sync_session
 
     try:
         with get_sync_session() as session:
-            cutoff = utc_now() - timedelta(hours=24)
             records = (
-                session.query(DiscordParlay)
-                .filter(
-                    DiscordParlay.discord_user_id == user_id,
-                    DiscordParlay.created_at >= cutoff,
-                )
-                .all()
+                session.query(DiscordParlay).filter(DiscordParlay.discord_user_id == user_id).all()
             )
         locked: set[int] = set()
         for rec in records:
@@ -200,6 +195,20 @@ class ConfirmParlayView(discord.ui.View):
                     await interaction.followup.send(
                         "⚠️ Bot restarted since this embed was posted. "
                         "Run `/predict` again to get a fresh parlay.",
+                        ephemeral=True,
+                    )
+                    return
+
+                # Lock-time dedup — prevent locking the same game twice even if
+                # the user generated multiple parlays before locking any of them.
+                already_locked = _locked_game_ids(str(interaction.user.id))
+                dupe_game_ids = [
+                    leg.game_id for leg in parlay.legs if leg.game_id in already_locked
+                ]
+                if dupe_game_ids:
+                    await interaction.followup.send(
+                        "⚠️ You already have a pick locked for one or more of these games. "
+                        "Use `/mypicks` to see your existing picks.",
                         ephemeral=True,
                     )
                     return
