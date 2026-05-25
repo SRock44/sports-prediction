@@ -259,6 +259,21 @@ def ingest_box_scores(session: Session, game_ext_id: str) -> IngestResult:
         result.errors.append(f"Game {game_ext_id} not found in DB")
         return result
 
+    # Update game score/status from team traditional stats (sum player points per team).
+    # The live poller may have missed the game ending; this ensures the game row is final.
+    if game.home_score is None and team_trad:
+        team_pts: dict[str, int] = {}
+        for tr in player_trad:
+            tid = str(tr.get("teamId", ""))
+            pts = tr.get("points") or 0
+            team_pts[tid] = team_pts.get(tid, 0) + int(pts)
+        home_ext = str(game.home_team.external_id) if game.home_team else None
+        away_ext = str(game.away_team.external_id) if game.away_team else None
+        if home_ext in team_pts and away_ext in team_pts:
+            game.home_score = team_pts[home_ext]
+            game.away_score = team_pts[away_ext]
+            game.status = "final"
+
     # Merge trad + adv player stats by PLAYER_ID
     player_stats_map: dict[str, dict[str, Any]] = {}
     for row in player_trad:
