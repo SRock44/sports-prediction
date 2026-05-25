@@ -232,7 +232,7 @@ def _pitcher_features(pitcher: dict[str, Any] | None, prefix: str) -> dict[str, 
     }
 
 
-def _parse_ip(ip_str) -> float:
+def _parse_ip(ip_str: float | str) -> float:
     """Convert baseball IP notation to decimal innings.
 
     Baseball uses base-3 fractions: "4.1" = 4⅓, "4.2" = 4⅔.
