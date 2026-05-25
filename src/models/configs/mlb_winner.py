@@ -3,7 +3,6 @@
 MLB_WINNER_FEATURES = [
     # ── Home team ─────────────────────────────────────────────────────────────
     "home_elo",
-    "home_is_home",
     "home_park_factor",
     "home_runs_scored_last5",
     "home_runs_scored_last10",
@@ -27,7 +26,6 @@ MLB_WINNER_FEATURES = [
     "home_rest_days",
     # ── Away team ─────────────────────────────────────────────────────────────
     "away_elo",
-    "away_is_home",
     "away_park_factor",
     "away_runs_scored_last5",
     "away_runs_scored_last10",
@@ -49,16 +47,20 @@ MLB_WINNER_FEATURES = [
     "away_bb_pct_last15",
     "away_win_pct_last10",
     "away_rest_days",
-    # ── Starting pitchers ─────────────────────────────────────────────────────
-    "home_sp_xfip",
-    "home_sp_k_bb_pct",
-    "home_sp_handedness",
-    "home_sp_known",
-    "away_sp_xfip",
-    "away_sp_k_bb_pct",
-    "away_sp_handedness",
-    "away_sp_known",
-    "sp_xfip_diff",
+    # ── Starting pitcher rolling form (last 4 starts before game) ─────────────
+    # sp_xfip/k_bb_pct are excluded — always 4.5/0.10 defaults (no pre-game xFIP feed).
+    # sp_form_* are computed from box-score stats of prior starts — populated after
+    # the backfill rebuilds matchup_features using post-game SP identification.
+    "home_sp_form_era",
+    "home_sp_form_k_pct",
+    "home_sp_form_bb_pct",
+    "home_sp_form_known",
+    "away_sp_form_era",
+    "away_sp_form_k_pct",
+    "away_sp_form_bb_pct",
+    "away_sp_form_known",
+    "sp_form_era_diff",
+    "sp_form_k_pct_diff",
     # ── Matchup / cross features ──────────────────────────────────────────────
     "elo_diff",
     "elo_home_win_prob",

@@ -173,7 +173,8 @@ def _get_confirmed_starter(
             if p.get("position") in ("SP", "P") and p.get("batting_order") == 0:
                 return p  # type: ignore[no-any-return]
 
-    # Box-score fallback: pitcher with most IP on this team in this game
+    # Box-score fallback: pitcher with most pitches thrown (proxy for starter).
+    # inningsPitched is missing from many rows; numberOfPitches covers 90%+ of games.
     result = session.execute(
         text("""
             SELECT pgs.player_id, pl.throws,
@@ -186,8 +187,17 @@ def _get_confirmed_starter(
             WHERE pgs.game_id = :gid
               AND pgs.team_id = :tid
               AND pgs.stats->'pitching' IS NOT NULL
-              AND (pgs.stats->'pitching'->>'inningsPitched')::float > 0
-            ORDER BY (pgs.stats->'pitching'->>'inningsPitched')::float DESC
+              AND pgs.stats->'pitching' != '{}'::jsonb
+              AND COALESCE(
+                    (pgs.stats->'pitching'->>'numberOfPitches')::float,
+                    (pgs.stats->'pitching'->>'inningsPitched')::float * 15,
+                    0
+                  ) > 0
+            ORDER BY COALESCE(
+                       (pgs.stats->'pitching'->>'numberOfPitches')::float,
+                       (pgs.stats->'pitching'->>'inningsPitched')::float * 15,
+                       0
+                     ) DESC
             LIMIT 1
         """),
         {"gid": game_id, "tid": team_id},
@@ -220,6 +230,18 @@ def _pitcher_features(pitcher: dict[str, Any] | None, prefix: str) -> dict[str, 
         f"{prefix}_handedness": int(pitcher.get("throws", "R") == "L"),
         f"{prefix}_known": 1,
     }
+
+
+def _parse_ip(ip_str) -> float:
+    """Convert baseball IP notation to decimal innings.
+
+    Baseball uses base-3 fractions: "4.1" = 4⅓, "4.2" = 4⅔.
+    Python float("4.1") = 4.1, which incorrectly inflates ERA calculations.
+    """
+    raw = float(ip_str)
+    whole = int(raw)
+    frac = round(raw - whole, 1)
+    return whole + frac * 10.0 / 3.0
 
 
 def _sp_rolling_form(
@@ -265,8 +287,12 @@ def _sp_rolling_form(
             bb = pit.get("baseOnBalls") or pit.get("walks")
             bf = pit.get("battersFaced") or pit.get("pitchesThrown")
 
-            if er is not None and ip and float(ip) > 0:
-                eras.append(float(er) * 9.0 / float(ip))
+            if er is not None and ip:
+                ip_actual = _parse_ip(ip)
+                # Require at least 2 actual innings to avoid relief-appearance noise
+                if ip_actual >= 2.0:
+                    era = float(er) * 9.0 / ip_actual
+                    eras.append(min(era, 27.0))  # cap at 27 ERA to limit outlier impact
             if k is not None and bf and float(bf) > 0:
                 k_pcts.append(float(k) / float(bf))
             if bb is not None and bf and float(bf) > 0:
