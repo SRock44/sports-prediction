@@ -242,8 +242,8 @@ def train_winner_model(
             "colsample_bylevel": trial.suggest_float("colsample_bylevel", 0.3, 1.0),
             "min_child_weight": trial.suggest_int("min_child_weight", 1, 30),
             "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 100.0, log=True),
-            "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 100.0, log=True),
-            "gamma": trial.suggest_float("gamma", 0.0, 5.0),
+            "reg_lambda": trial.suggest_float("reg_lambda", 0.1, 100.0, log=True),
+            "gamma": trial.suggest_float("gamma", 0.0, 1.5),
         }
         fold_losses = []
         for X_tr, y_tr, w_tr, X_val, y_val, w_val in cv_folds:
