@@ -51,6 +51,12 @@ _PROP_SUBCATEGORIES: dict[str, list[tuple[int, int]]] = {
 # Stat keyword → canonical stat name (matches train_props.py _props_stats).
 # Checked against the lowercase market-type name.
 _MARKET_TO_STAT: dict[str, str] = {
+    # PRA multi-stat patterns must come before individual "rebounds"/"points" keywords
+    # so that longer-key-first matching picks the combined stat correctly.
+    "points + rebounds + assists": "PRA",
+    "pts + reb + ast": "PRA",
+    "pts+reb+ast": "PRA",
+    "rebounds + assists": "PRA",
     "points": "PTS",
     "rebounds": "REB",
     "assists": "AST",
@@ -326,7 +332,7 @@ def _parse_props(data: dict[str, Any]) -> list[dict[str, Any]]:
         for p in market.get("participants", []):
             n = (p.get("metadata") or {}).get("rosterName") or p.get("name", "")
             if n:
-                return n
+                return str(n)
         mname = (market.get("name") or "").strip()
         # "Player Name - Stat Type" format
         parts = mname.split(" - ")
