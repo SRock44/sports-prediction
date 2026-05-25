@@ -34,6 +34,11 @@ BEAT_SCHEDULE = {
         "task": "src.tasks.ingest_tasks.ingest_yesterday_mlb",
         "schedule": crontab(hour=9, minute=0),  # 4:00 AM EST (parallel)
     },
+    # ── MLB SP feature patch (4:30 AM EST / 9:30 AM UTC — after box scores ingest) ─
+    "patch-sp-features-mlb": {
+        "task": "src.tasks.ingest_tasks.patch_sp_features_mlb",
+        "schedule": crontab(hour=9, minute=30),  # 4:30 AM EST
+    },
     # ── Injury reports (6:00 AM EST / 11:00 AM UTC) ───────────────────────────
     "refresh-nba-injuries": {
         "task": "src.tasks.ingest_tasks.refresh_nba_injuries",

@@ -67,13 +67,12 @@ def ingest_yesterday_nba(self: Any) -> dict:
 
 @shared_task(name="src.tasks.ingest_tasks.ingest_yesterday_mlb", bind=True, max_retries=3)
 def ingest_yesterday_mlb(self: Any) -> dict:
-    """Ingest box scores only for games completed yesterday — not the whole season."""
+    """Ingest box scores for games from yesterday ET (ET-midnight boundaries)."""
     from src.db.models import Game, Sport
     from src.ingest.mlb.games import ingest_box_score
 
-    yesterday = date.today() - timedelta(days=1)
-    day_start = datetime(yesterday.year, yesterday.month, yesterday.day, tzinfo=UTC)
-    day_end = day_start + timedelta(days=1)
+    day_start, day_end = _yesterday_et_window()
+    now_utc = datetime.now(UTC)
 
     total = IngestResult()
     with sync_session_factory() as session:
@@ -87,7 +86,7 @@ def ingest_yesterday_mlb(self: Any) -> dict:
                 Game.sport_id == sport.id,
                 Game.scheduled_utc >= day_start,
                 Game.scheduled_utc < day_end,
-                Game.status == "final",
+                Game.scheduled_utc < now_utc,
             )
             .all()
         )
@@ -99,6 +98,86 @@ def ingest_yesterday_mlb(self: Any) -> dict:
 
     log.info("task.mlb_ingest.done", inserted=total.rows_inserted)
     return {"inserted": total.rows_inserted, "updated": total.rows_updated}
+
+
+@shared_task(name="src.tasks.ingest_tasks.patch_sp_features_mlb", bind=True, max_retries=2)
+def patch_sp_features_mlb(self: Any) -> dict:
+    """Backfill SP form features into matchup_features for recently completed MLB games.
+
+    Runs after ingest_yesterday_mlb so box scores are available. Patches only
+    games where home_sp_form_known=0 — idempotent.
+    """
+    import json
+
+    from sqlalchemy import text
+
+    from src.core.time import as_of_for_game
+    from src.features.mlb.matchup import _get_confirmed_starter, _sp_rolling_form
+
+    patched = skipped = 0
+    with sync_session_factory() as session:
+        rows = session.execute(
+            text("""
+                SELECT g.id, g.home_team_id, g.away_team_id, g.scheduled_utc
+                FROM games g
+                JOIN sports sp ON sp.id = g.sport_id
+                JOIN matchup_features mf ON mf.game_id = g.id
+                WHERE sp.code = 'mlb'
+                  AND g.status = 'final'
+                  AND g.scheduled_utc > NOW() - INTERVAL '3 days'
+                  AND (mf.features->>'home_sp_form_known' IS NULL
+                       OR (mf.features->>'home_sp_form_known')::int = 0)
+            """)
+        ).fetchall()
+
+        for row in rows:
+            try:
+                as_of = as_of_for_game(row.scheduled_utc)
+                home_sp = _get_confirmed_starter(session, row.id, row.home_team_id, as_of)
+                away_sp = _get_confirmed_starter(session, row.id, row.away_team_id, as_of)
+                home_sp_id = (
+                    (home_sp.get("playerId") or home_sp.get("player_id")) if home_sp else None
+                )
+                away_sp_id = (
+                    (away_sp.get("playerId") or away_sp.get("player_id")) if away_sp else None
+                )
+
+                if home_sp_id is None and away_sp_id is None:
+                    skipped += 1
+                    continue
+
+                home_form = _sp_rolling_form(session, home_sp_id, as_of, prefix="home_sp")
+                away_form = _sp_rolling_form(session, away_sp_id, as_of, prefix="away_sp")
+
+                if not home_form.get("home_sp_form_known") and not away_form.get(
+                    "away_sp_form_known"
+                ):
+                    skipped += 1
+                    continue
+
+                patch = {
+                    **home_form,
+                    **away_form,
+                    "sp_form_era_diff": home_form.get("home_sp_form_era", 4.50)
+                    - away_form.get("away_sp_form_era", 4.50),
+                    "sp_form_k_pct_diff": home_form.get("home_sp_form_k_pct", 0.22)
+                    - away_form.get("away_sp_form_k_pct", 0.22),
+                }
+                session.execute(
+                    text(
+                        "UPDATE matchup_features SET features = features || CAST(:patch AS jsonb) WHERE game_id = :gid"
+                    ),
+                    {"gid": row.id, "patch": json.dumps(patch)},
+                )
+                patched += 1
+            except Exception as exc:
+                log.warning("patch_sp.error", game_id=row.id, error=str(exc))
+                skipped += 1
+
+        session.commit()
+
+    log.info("patch_sp_features.done", patched=patched, skipped=skipped)
+    return {"patched": patched, "skipped": skipped}
 
 
 @shared_task(name="src.tasks.ingest_tasks.refresh_nba_injuries", bind=True, max_retries=2)
