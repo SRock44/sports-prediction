@@ -173,3 +173,53 @@ def build_no_picks_embed(sport: str, n_legs: int) -> dict[str, Any]:
         ),
         "color": 0x95A5A6,
     }
+
+
+def _american_to_implied(odds: float) -> float:
+    if odds >= 0:
+        return 100.0 / (odds + 100.0)
+    return abs(odds) / (abs(odds) + 100.0)
+
+
+def build_props_embed(props: list[dict[str, Any]], sport: str) -> dict[str, Any]:
+    """Embed showing top player prop edges for /props command.
+
+    Each entry in props should have:
+      player_name, target, dk_line, p_over, dk_over_implied, edge, model_median, game_label
+    """
+    sport_emoji = "🏀" if sport == "nba" else "⚾"
+    color = 0x1D82B6 if sport == "nba" else 0xE8473F
+
+    if not props:
+        return {
+            "title": f"{sport_emoji} No Props Available",
+            "description": "No player prop predictions today, or models not yet trained.",
+            "color": 0x95A5A6,
+        }
+
+    lines: list[str] = []
+    for p in props:
+        edge = p["edge"]
+        direction = "OVER" if edge > 0 else "UNDER"
+        abs_edge = abs(edge)
+        edge_sign = "🟢" if abs_edge >= 0.05 else "🟡" if abs_edge >= 0.03 else "⚪"
+        model_prob = p["p_over"] if edge > 0 else 1.0 - p["p_over"]
+        odds_str = _odds_str(int(p.get("dk_odds", -110)))
+        lines.append(
+            f"{edge_sign} **{p['player_name']}** — {p['target']} {direction} {p['dk_line']:.1f}"
+        )
+        lines.append(
+            f"  Model: **{model_prob:.0%}**  ·  Book: {p['dk_over_implied']:.0%}"
+            f"  ·  Edge: **{abs_edge:+.1%}**  ·  {odds_str}"
+        )
+        lines.append(f"  Median projected: **{p['model_median']:.1f}**  ·  _{p['game_label']}_")
+        lines.append("")
+
+    return {
+        "title": f"{sport_emoji} Today's Prop Edges",
+        "description": "\n".join(lines).rstrip(),
+        "color": color,
+        "footer": {
+            "text": f"{len(props)} prop{'s' if len(props) != 1 else ''} shown  ·  Not financial advice"
+        },
+    }

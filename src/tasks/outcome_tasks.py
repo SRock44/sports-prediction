@@ -369,11 +369,118 @@ def post_daily_picks(sport: str) -> dict[str, Any]:
     return {"status": "ok", "n_picks": len(picks)}
 
 
+def post_daily_props(sport: str) -> dict[str, Any]:
+    """Post today's top props picks to the sport Discord channel. Runs after scoring."""
+    import httpx
+    from sqlalchemy import text
+
+    webhook_url = settings.discord_webhook_nba if sport == "nba" else settings.discord_webhook_mlb
+    if not webhook_url:
+        log.warning("daily_props.no_webhook", sport=sport)
+        return {"status": "skipped", "reason": "no_webhook"}
+
+    sport_emoji = "🏀" if sport == "nba" else "⚾"
+
+    with sync_session_factory() as session:
+        rows = session.execute(
+            text("""
+            SELECT
+                pl.full_name      AS player_name,
+                m.target          AS stat,
+                p.value           AS median,
+                p.probability     AS p_over,
+                p.quantiles       AS quantiles,
+                g.home_team_id,
+                g.away_team_id,
+                ht.name           AS home_team,
+                at.name           AS away_team,
+                g.scheduled_utc
+            FROM predictions p
+            JOIN models m      ON m.id = p.model_id
+            JOIN players pl    ON pl.id = p.player_id
+            JOIN games g       ON g.id = p.game_id
+            JOIN teams ht      ON ht.id = g.home_team_id
+            JOIN teams at      ON at.id = g.away_team_id
+            JOIN sports sp     ON sp.id = m.sport_id
+            WHERE sp.code = :sport
+              AND m.kind = 'props'
+              AND m.active = true
+              AND p.player_id IS NOT NULL
+              AND g.scheduled_utc BETWEEN now() AND now() + interval '36 hours'
+            ORDER BY abs(p.probability - 0.5) DESC
+            LIMIT 100
+        """),
+            {"sport": sport},
+        ).fetchall()
+
+    if not rows:
+        log.info("daily_props.no_props", sport=sport)
+        return {"status": "skipped", "reason": "no_props"}
+
+    # Build pick list: only positive-edge picks, sorted by confidence then edge
+    picks = []
+    for r in rows:
+        p_over = float(r.p_over or 0.5)
+        median = float(r.median or 0)
+        confidence = max(p_over, 1 - p_over)
+        direction = "OVER" if p_over >= 0.5 else "UNDER"
+        picks.append(
+            {
+                "player": r.player_name,
+                "stat": r.stat,
+                "median": median,
+                "p_over": p_over,
+                "confidence": confidence,
+                "direction": direction,
+                "home": r.home_team,
+                "away": r.away_team,
+                "game_time": r.scheduled_utc,
+            }
+        )
+
+    # Sort by confidence, take top 8
+    picks.sort(key=lambda x: x["confidence"], reverse=True)
+    picks = picks[:8]
+
+    lines = [
+        f"{sport_emoji} **TODAY'S TOP PROP PICKS** — {sport.upper()}",
+        "",
+    ]
+    for i, p in enumerate(picks, 1):
+        conf_pct = p["confidence"]
+        conf_bar = "🟢" if conf_pct >= 0.70 else "🟡" if conf_pct >= 0.60 else "⚪"
+        game_time = p["game_time"].strftime("%I:%M %p UTC") if p["game_time"] else ""
+        game_label = f"{p['away']} @ {p['home']}"
+        lines.append(
+            f"**{i}.** {conf_bar} **{p['player']}** {p['direction']} `{p['stat']}`\n"
+            f"   Model median: **{p['median']:.1f}**  ·  Confidence: **{conf_pct:.0%}**\n"
+            f"   _{game_label}  ·  {game_time}_"
+        )
+
+    lines += ["", "_Props scored fresh each morning · Use /props for full list_"]
+
+    embed = {
+        "title": f"{sport_emoji} Daily Props — {sport.upper()}",
+        "description": "\n".join(lines),
+        "color": 0x1D82B6 if sport == "nba" else 0xE8473F,
+        "footer": {"text": "Model median vs book line · Not financial advice"},
+    }
+
+    try:
+        httpx.post(webhook_url, json={"embeds": [embed]}, timeout=10).raise_for_status()
+        log.info("daily_props.posted", sport=sport, n=len(picks))
+        return {"status": "ok", "n_picks": len(picks)}
+    except Exception as exc:
+        log.warning("daily_props.post_failed", sport=sport, error=str(exc))
+        return {"status": "error", "error": str(exc)}
+
+
 # ── Celery task registration ──────────────────────────────────────────────────
 
 from src.tasks.celery_app import app  # noqa: E402
 
 _post_daily_picks_fn = post_daily_picks
+_post_daily_props_fn = post_daily_props
 
 
 @app.task(name="src.tasks.outcome_tasks.check_outcomes_nba", bind=False)
@@ -389,3 +496,8 @@ def check_outcomes_mlb() -> dict:
 @app.task(name="src.tasks.outcome_tasks.post_daily_picks", bind=False)
 def post_daily_picks(sport: str) -> dict:  # type: ignore[misc]
     return _post_daily_picks_fn(sport)
+
+
+@app.task(name="src.tasks.outcome_tasks.post_daily_props", bind=False)
+def post_daily_props(sport: str) -> dict:  # type: ignore[misc]
+    return _post_daily_props_fn(sport)
