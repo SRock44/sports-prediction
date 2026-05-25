@@ -240,10 +240,11 @@ def _resolve_parlay_legs(game_id: int, actual_winner: str, correct: bool) -> Non
 
 
 def _get_season_record(sport: str) -> str:
-    """Compute season record from bot-posted picks only (discord_parlays where discord_user_id='bot').
+    """Compute record across all resolved discord parlays, deduped by pick combination.
 
-    Only counts picks we actually published — high-confidence, edge-positive selections —
-    not every raw model prediction.
+    Two parlays are the same pick if they cover the exact same games with the same
+    pick direction — regardless of which user submitted them. Each unique pick
+    combination counts once toward the record.
     """
     try:
         with sync_session_factory() as session:
@@ -251,14 +252,29 @@ def _get_season_record(sport: str) -> str:
 
             result = session.execute(
                 text("""
+                    WITH keyed AS (
+                        SELECT
+                            dp.status,
+                            STRING_AGG(
+                                (leg->>'game_id') || ':' || (leg->>'pick'),
+                                ',' ORDER BY leg->>'game_id'
+                            ) AS pick_key
+                        FROM discord_parlays dp,
+                        LATERAL jsonb_array_elements(dp.legs) AS leg
+                        WHERE dp.sport_code = :sport
+                          AND dp.status IN ('won', 'lost')
+                          AND dp.created_at > NOW() - INTERVAL '180 days'
+                        GROUP BY dp.id, dp.status
+                    ),
+                    unique_picks AS (
+                        SELECT DISTINCT ON (pick_key) status
+                        FROM keyed
+                        ORDER BY pick_key
+                    )
                     SELECT
                         COUNT(*) FILTER (WHERE status = 'won') AS wins,
                         COUNT(*) AS total
-                    FROM discord_parlays
-                    WHERE discord_user_id = 'bot'
-                      AND sport_code = :sport
-                      AND status IN ('won', 'lost')
-                      AND created_at > NOW() - INTERVAL '180 days'
+                    FROM unique_picks
                 """),
                 {"sport": sport},
             ).first()
