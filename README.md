@@ -22,15 +22,15 @@ No paid data feeds. No LLM inference. Fully self-hosted.
 ## Predictions
 
 ### Game winner (moneyline)
-- **NBA**: calibrated win probability for each team; realistic accuracy ~67–69%
-- **MLB**: calibrated win probability; realistic accuracy ~56–58%
+- **NBA**: calibrated win probability; current champion (id=9) accuracy **65.1%**, log-loss 0.6514
+- **MLB**: calibrated win probability; current champion (id=10) accuracy **53.3%**, log-loss 0.6922
 
 ### Player props
 - **NBA**: PTS, REB, AST, 3PM, PRA
-- **MLB hitters**: H, HR, TB, RBI, K
-- **MLB pitchers**: K, ER, OUTS
+- **MLB hitters**: H, HR, RBI
+- **MLB pitchers**: PITCHER_K (strikeouts), PITCHER_ER (earned runs)
 
-Props output a full predictive distribution (10th / 25th / 50th / 75th / 90th percentile) so any over/under line can be evaluated.
+Props output a full predictive distribution (10th / 25th / 50th / 75th / 90th percentile) so any over/under line can be evaluated. Lines are sourced from DraftKings subcategory endpoints daily.
 
 ---
 
@@ -208,22 +208,32 @@ python -m src.cli model promote <run-id>              # Force-promote an MLflow 
 
 All jobs run automatically via Celery beat once the system is running.
 
-| Time (UTC) | Job | What it does |
-|---|---|---|
-| 09:00 daily | `ingest_yesterday` | Box scores + play-by-play for completed games |
-| 11:00 daily | `refresh_injuries` | NBA injury PDF + MLB IL transactions |
-| 12:00 daily | `rebuild_features` | Matchup features for upcoming 48h games |
-| 13:00 daily | `score_upcoming` | Inference → predictions → Discord/Telegram |
-| 14:00 daily | `post_daily_picks` (NBA) | Post top-10 model picks to Discord |
-| 14:30 daily | `post_daily_picks` (MLB) | Post top-10 model picks to Discord |
-| Every 5 min, 18:00–05:00 UTC | `check_outcomes` | Mark wins/losses, post results to Discord |
-| Every 15 min | `rescore_lineup_change` | Re-score when confirmed lineups arrive |
-| Every 2 min (in-window) | `poll_live` | Live score updates during active games |
-| 02:00 daily | `train_challenger` | Full retrain from scratch, log to MLflow |
-| 03:00 daily | `drift_monitor` | Performance, calibration, and PSI drift checks |
-| Mon 04:00 | `evaluate_and_promote` | Promote best nightly challenger if it passes all gates |
-| Sun 03:00 | `backtest_report` | Regenerate full evaluation report |
-| 1st of month 05:00 | `hyperparam_search` | Optuna re-tune of all hyperparameters |
+| Time (UTC) | Time (EST) | Job | What it does |
+|---|---|---|---|
+| 08:00 daily | 3:00 AM | `ingest_schedule` | Refresh NBA + MLB schedules 7 days ahead |
+| 06:30 daily | 1:30 AM | `ingest_yesterday_nba` (early) | Catch late NBA playoff games |
+| 09:00 daily | 4:00 AM | `ingest_yesterday` | Box scores for completed games (NBA + MLB) |
+| 09:30 daily | 4:30 AM | `patch_sp_features_mlb` | Backfill MLB starting pitcher form features |
+| 11:00 daily | 6:00 AM | `refresh_injuries` | NBA injury PDF + MLB IL transactions |
+| 12:00 daily | 7:00 AM | `rebuild_features` | Matchup features for upcoming 48h games |
+| 12:40 daily | 7:40 AM | `train_challenger` | Full retrain from scratch, log to MLflow |
+| 12:45 daily | 7:45 AM | `retrain_champion` | Refresh champion on latest data |
+| 12:55 daily | 7:55 AM | `train_props` | Retrain all player prop models (NBA + MLB) |
+| 13:00 daily | 8:00 AM | `score_upcoming` | Game winner inference → predictions |
+| 13:15 daily | 8:15 AM | `score_props_upcoming` | Prop inference → predictions |
+| 13:30 daily | 8:30 AM | `post_daily_props` (NBA) | Post top prop picks to Discord |
+| 14:00 daily | 9:00 AM | `post_daily_picks` (NBA) + `post_daily_props` (MLB) | Post top game picks + MLB props to Discord |
+| 14:30 daily | 9:30 AM | `post_daily_picks` (MLB) | Post top MLB game picks to Discord |
+| 15–22 UTC every 30 min | 10 AM–5 PM | `rescore_props` (NBA) | Re-score NBA props as lineups/lines update |
+| 17–23 UTC every 30 min | 12–6 PM | `rescore_props` (MLB) | Re-score MLB props as lineups/lines update |
+| 18:00 daily | 1:00 PM | `ingest_mlb_weather` | 5-day weather lookahead for outdoor venues |
+| Every 2 min | — | `poll_live` | Live score updates during active games |
+| Every 5 min, 18:00–05:00 UTC | 1 PM–12 AM | `check_outcomes` | Mark wins/losses, post results to Discord |
+| Every 15 min, 15:00–22:00 UTC | 10 AM–5 PM | `rescore_lineup_change` | Re-score when confirmed lineups arrive |
+| 04:00 daily | 11:00 PM | `drift_monitor` | Performance, calibration, and PSI drift checks |
+| 06:00 daily | 1:00 AM | `evaluate_and_promote` | Promote challenger if it beats champion by ≥0.005 log-loss |
+| Sun 03:00 UTC | Sat 10 PM | `backtest_report` | Regenerate full walk-forward evaluation report |
+| 1st of month 05:00 UTC | 12:00 AM | `hyperparam_search` | Monthly Optuna re-tune of all hyperparameters |
 
 ---
 

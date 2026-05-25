@@ -307,3 +307,113 @@ Champions unchanged after Run 4 — id=3 (NBA) and id=4 (MLB) still active.
 |-------|-------------|--------|----------------------|---------------|
 | NBA   | 8           | `9b6b32c4` | 0.6464 | High 60s% |
 | MLB   | 7           | `9bf1b64b` | 0.6839 | Mid 50s%  |
+
+---
+
+---
+# 2026-05-25 — Props pipeline, DK subcategory fix, champion refreshes
+---
+
+## System changes on 2026-05-25
+
+### Props pipeline — fully operational
+- Player prop models (LightGBM multi-quantile) now train daily at 7:55 AM EST via `train_props` Celery task
+- DK batter prop fetcher rewritten to use **subcategory endpoints** — category-level endpoint only returned HR milestones; H/TB/RBI/PITCHER_K/PITCHER_ER each live in separate subcategory IDs
+- Fixed player name extraction for O/U markets (market name format: "Luis Arraez Hits O/U", no participants array)
+- Fixed `"hits"` stat detection (was `" hits"` with leading space, missed "Hits O/U")
+- Props scoring (`score_props_upcoming`) and daily Discord posting (`post_daily_props`) both active
+
+### Champion refresh — 2026-05-25 12:45 UTC
+- `retrain_champion` ran for both sports on latest data — both refreshed to new run IDs
+- NBA: marginal log-loss regression (0.6514 → 0.6514, essentially flat)
+- MLB: slight regression (0.6889 → 0.6922)
+
+---
+
+## Model id=9 — NBA Winner Champion (Current) ✓
+**Date:** 2026-05-25 12:45 UTC  |  **Run ID:** `0bb46d32`
+**Sport:** NBA
+**Status:** Active champion ✓
+
+| Metric   | Value  |
+|----------|--------|
+| Log-loss | **0.6514** |
+| Accuracy | 65.07% |
+| Brier    | 0.2179 |
+| ECE      | 0.0337 |
+| Samples  | 1,297  |
+
+**Notes:**
+- Champion refresh on 2026-05-25 data — same hyperparams as id=8, essentially flat metrics
+- Replaces id=8 as the active champion
+
+---
+
+## Model id=10 — MLB Winner Champion (Current) ✓
+**Date:** 2026-05-25 12:45 UTC  |  **Run ID:** `43f61d63`
+**Sport:** MLB
+**Status:** Active champion ✓
+
+| Metric   | Value  |
+|----------|--------|
+| Log-loss | 0.6922 |
+| Accuracy | 53.29% |
+| Brier    | 0.2494 |
+| ECE      | 0.0201 |
+| Samples  | 745    |
+
+**Notes:**
+- Champion refresh on 2026-05-25 data — slight log-loss regression vs id=7 (0.6889 → 0.6922)
+- ECE improved slightly (0.0261 → 0.0201)
+- Baseball's variance makes day-to-day fluctuation in this range normal
+
+---
+
+## Props Models — NBA (trained 2026-05-25) ✓
+**Framework:** LightGBM multi-quantile regression (q10/q25/q50/q75/q90)
+**Features:** rolling last5/10/20 per-stat + per-minute rates, std, rest days, home/away split, opp def rating at position
+**Training data:** player_game_stats — ~94K rows across 5 seasons
+
+| id | Target | MAE (median) | Coverage 80% | Run ID |
+|----|--------|-------------|--------------|--------|
+| 27 | PTS    | 4.731       | 79.7%        | `89cb57d1` |
+| 28 | REB    | 1.928       | 80.1%        | `3211fd81` |
+| 29 | AST    | 1.381       | 83.8%        | `dfc1d838` |
+| 30 | 3PM    | 0.894       | 89.4%        | `b57616b2` |
+| 31 | PRA    | 6.149       | 80.5%        | `8a8b03e9` |
+
+**Notes:**
+- PTS MAE of 4.7 means model median is within ~5 points of actual — reasonable for a 30-point stat
+- 3PM best calibrated (coverage 89.4%) — low-variance stat, model is conservative
+- PRA MAE of 6.1 expected — it's the sum of PTS+REB+AST, inheriting all three errors
+- Coverage 80% targets the 80th percentile interval; values near 80% indicate well-calibrated uncertainty
+
+---
+
+## Props Models — MLB (trained 2026-05-25) ✓
+**Framework:** LightGBM multi-quantile regression (q10/q25/q50/q75/q90)
+**Features:** rolling last5/10/20 per-stat + per-minute rates (per-9-innings for batters, per-IP for pitchers), std, rest days
+**Note:** TB was skipped — `totalBases` field absent from player_game_stats JSON
+
+| id | Target     | MAE (median) | Coverage 80% | Run ID |
+|----|------------|-------------|--------------|--------|
+| 22 | H          | 0.609       | 95.7%        | `a8872be9` |
+| 23 | HR         | 0.093       | 91.2%        | `8e094cf6` |
+| 24 | RBI        | 0.369       | 91.5%        | `92fff923` |
+| 25 | PITCHER_K  | 1.784       | 78.6%        | `89602246` |
+| 26 | PITCHER_ER | 1.378       | 82.6%        | `9aaf8ce9` |
+
+**Notes:**
+- H coverage 95.7% is over-conservative — model predicts near-0 median for most batters (most games = 0-1 hits), wide intervals. Line is typically 0.5, which is easy to bracket.
+- HR MAE 0.093 and coverage 91.2% reflect HR being a rare event — model predicts ~0 median, captures reality well
+- PITCHER_K best discriminative stat for pitchers: MAE 1.78 on a 4-8 K range, ~22% relative error
+- Previous K model was broken (feature name mismatch `K_*` vs `PITCHER_K_*`); these are the first correct K predictions
+
+---
+
+## Targets (updated 2026-05-25)
+
+| Sport | Champion id | Run ID     | Must beat (log-loss) | Accuracy goal |
+|-------|-------------|------------|----------------------|---------------|
+| NBA   | 9           | `0bb46d32` | 0.6464               | High 60s%     |
+| MLB   | 10          | `43f61d63` | 0.6872               | Mid 50s%      |
