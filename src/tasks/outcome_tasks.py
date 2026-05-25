@@ -197,6 +197,8 @@ def _post_win(row: Any, model_prob: float, model_pick: str) -> None:
 
 def _resolve_parlay_legs(game_id: int, actual_winner: str, correct: bool) -> None:
     """Update DiscordParlay rows that contain this game as a leg."""
+    from sqlalchemy.orm.attributes import flag_modified
+
     with sync_session_factory() as session:
         from src.db.models.discord_parlay import DiscordParlay
 
@@ -213,10 +215,18 @@ def _resolve_parlay_legs(game_id: int, actual_winner: str, correct: bool) -> Non
             legs = parlay.legs or []
             for leg in legs:
                 if leg.get("game_id") == game_id:
-                    leg["result"] = "won" if correct else "lost"
+                    # Use the leg's own pick, not the model's raw probability direction.
+                    # The bot may have picked the contra side (book mispricing), so
+                    # the outer `correct` (model-prob vs actual) would be wrong here.
+                    leg_correct = leg.get("pick") == actual_winner
+                    leg["result"] = "won" if leg_correct else "lost"
                     leg["actual_winner"] = actual_winner
 
+            # JSONB is not a MutableList — SQLAlchemy won't detect in-place dict
+            # mutations. flag_modified forces the column into the UPDATE statement.
             parlay.legs = legs
+            flag_modified(parlay, "legs")
+
             all_resolved = all(leg.get("result") for leg in legs)
             if all_resolved:
                 n_correct = sum(1 for leg in legs if leg.get("result") == "won")
