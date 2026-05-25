@@ -219,6 +219,11 @@ def ingest_box_score(session: Session, game_pk: str) -> IngestResult:
         result.errors.append(f"Game {game_pk} not in DB")
         return result
 
+    # Purge existing stats so re-ingestion is idempotent (same fix as NBA).
+    session.query(PlayerGameStats).filter_by(game_id=game.id).delete()
+    session.query(TeamGameStats).filter_by(game_id=game.id).delete()
+    session.flush()
+
     for side in ("home", "away"):
         side_data = box.get(side, {})
         team_id_ext = str(side_data.get("team", {}).get("id", ""))
@@ -226,20 +231,14 @@ def ingest_box_score(session: Session, game_pk: str) -> IngestResult:
 
         team_stats_row = side_data.get("teamStats", {})
         if team and team_stats_row:
-            existing = (
-                session.query(TeamGameStats).filter_by(game_id=game.id, team_id=team.id).first()
-            )
-            if existing is None:
-                session.add(
-                    TeamGameStats(
-                        game_id=game.id,
-                        team_id=team.id,
-                        recorded_at=utc_now(),
-                        stats=team_stats_row,
-                    )
+            session.add(
+                TeamGameStats(
+                    game_id=game.id,
+                    team_id=team.id,
+                    recorded_at=utc_now(),
+                    stats=team_stats_row,
                 )
-            else:
-                existing.stats = team_stats_row
+            )
 
         if team is None:
             log.warning(
@@ -286,25 +285,16 @@ def ingest_box_score(session: Session, game_pk: str) -> IngestResult:
                 "game_status": p_data.get("gameStatus", {}),
             }
 
-            existing_pgs = (
-                session.query(PlayerGameStats)
-                .filter_by(game_id=game.id, player_id=player.id)
-                .first()
-            )
-            if existing_pgs is None:
-                session.add(
-                    PlayerGameStats(
-                        game_id=game.id,
-                        player_id=player.id,
-                        team_id=team.id,
-                        recorded_at=utc_now(),
-                        stats=stats_payload,
-                    )
+            session.add(
+                PlayerGameStats(
+                    game_id=game.id,
+                    player_id=player.id,
+                    team_id=team.id,
+                    recorded_at=utc_now(),
+                    stats=stats_payload,
                 )
-                result.rows_inserted += 1
-            else:
-                existing_pgs.stats = stats_payload
-                result.rows_updated += 1
+            )
+            result.rows_inserted += 1
 
     session.flush()
     return result

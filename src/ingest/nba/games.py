@@ -274,6 +274,13 @@ def ingest_box_scores(session: Session, game_ext_id: str) -> IngestResult:
             game.away_score = team_pts[away_ext]
             game.status = "final"
 
+    # Purge existing stats for this game so re-ingestion is idempotent.
+    # TimescaleDB hypertable PK includes recorded_at, so the ORM update path
+    # hits "expected N rows; M matched" if duplicate rows exist from a prior run.
+    session.query(PlayerGameStats).filter_by(game_id=game.id).delete()
+    session.query(TeamGameStats).filter_by(game_id=game.id).delete()
+    session.flush()
+
     # Merge trad + adv player stats by PLAYER_ID
     player_stats_map: dict[str, dict[str, Any]] = {}
     for row in player_trad:
@@ -309,22 +316,16 @@ def ingest_box_scores(session: Session, game_ext_id: str) -> IngestResult:
             )
             continue
 
-        existing_pgs = (
-            session.query(PlayerGameStats).filter_by(game_id=game.id, player_id=player.id).first()
-        )
-        if existing_pgs is None:
-            pgs = PlayerGameStats(
+        session.add(
+            PlayerGameStats(
                 game_id=game.id,
                 player_id=player.id,
                 team_id=team.id,
                 recorded_at=utc_now(),
                 stats=stats,
             )
-            session.add(pgs)
-            result.rows_inserted += 1
-        else:
-            existing_pgs.stats = stats
-            result.rows_updated += 1
+        )
+        result.rows_inserted += 1
 
     # Index advanced team stats by teamId for merge below
     team_adv_map: dict[str, dict[str, Any]] = {str(r.get("teamId", "")): r for r in team_adv}
@@ -340,19 +341,14 @@ def ingest_box_scores(session: Session, game_ext_id: str) -> IngestResult:
         if team_id_ext in team_adv_map:
             merged_stats["advanced"] = team_adv_map[team_id_ext]
 
-        existing_tgs = (
-            session.query(TeamGameStats).filter_by(game_id=game.id, team_id=team.id).first()
-        )
-        if existing_tgs is None:
-            tgs = TeamGameStats(
+        session.add(
+            TeamGameStats(
                 game_id=game.id,
                 team_id=team.id,
                 recorded_at=utc_now(),
                 stats=merged_stats,
             )
-            session.add(tgs)
-        else:
-            existing_tgs.stats = merged_stats
+        )
 
     session.flush()
     return result
