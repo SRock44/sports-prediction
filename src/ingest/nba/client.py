@@ -121,9 +121,25 @@ def get_all_players(is_only_current_season: bool = False) -> list[dict[str, Any]
     return static_players.get_players(is_only_current_season)  # type: ignore[no-any-return]
 
 
+_LIVE_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Connection": "keep-alive",
+    "Host": "cdn.nba.com",
+    "Origin": "https://www.nba.com",
+    "Referer": "https://www.nba.com/",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+}
+
+
 def get_live_scoreboard() -> dict[str, Any]:
     """Live game scores and status (polling endpoint)."""
-    sb = live_scoreboard.ScoreBoard()
+    sb = live_scoreboard.ScoreBoard(headers=_LIVE_HEADERS)
     return sb.get_dict()  # type: ignore[no-any-return]
 
 
