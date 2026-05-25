@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 from datetime import timedelta
 from decimal import Decimal
@@ -13,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from src.core.logging import get_logger
 from src.core.time import as_of_for_game, utc_now
-from src.db.models import Game, ModelRecord, Prediction, PredictionAudit, Sport
+from src.db.models import Game, ModelRecord, Player, Prediction, PredictionAudit, Sport, Team
 from src.ingest.common import dict_hash
 from src.models.registry import load_model
 
@@ -211,3 +212,277 @@ def load_model_feature_names(run_id: str) -> str:
 
 def _hash_features(features: dict[str, Any]) -> str:
     return dict_hash(features)
+
+
+# ── Player props scoring ──────────────────────────────────────────────────────
+
+_MLB_PITCHER_STATS = {"PITCHER_K", "PITCHER_ER"}
+
+
+def score_props_upcoming(session: Session, sport_code: str, hours_ahead: int = 36) -> int:
+    """Score player props for upcoming games. Returns number of predictions written."""
+    from src.ingest.odds.draftkings import get_player_props
+
+    sport = session.query(Sport).filter_by(code=sport_code).first()
+    if sport is None:
+        return 0
+
+    try:
+        dk_props = get_player_props(sport_code)
+    except Exception as exc:
+        log.error("score_props.dk_fetch_failed", sport=sport_code, error=str(exc))
+        return 0
+
+    if not dk_props:
+        log.info("score_props.no_dk_lines", sport=sport_code)
+        return 0
+
+    # Pre-load all active props models, keyed by stat
+    stats_needed = {p["stat"] for p in dk_props}
+    prop_models: dict[str, tuple[ModelRecord, Any, list[str]]] = {}
+    for stat in stats_needed:
+        rec = (
+            session.query(ModelRecord)
+            .filter_by(sport_id=sport.id, kind="props", target=stat, active=True)
+            .first()
+        )
+        if rec is None:
+            continue
+        try:
+            m = load_model(rec.mlflow_run_id, framework="sklearn")
+            fn = json.loads(load_model_feature_names(rec.mlflow_run_id))
+            prop_models[stat] = (rec, m, fn)
+        except Exception as exc:
+            log.warning("score_props.model_load_failed", stat=stat, error=str(exc))
+
+    if not prop_models:
+        log.info("score_props.no_active_models", sport=sport_code)
+        return 0
+
+    now = utc_now()
+    count = 0
+
+    for prop in dk_props:
+        stat = prop["stat"]
+        if stat not in prop_models:
+            continue
+        rec, model, feat_names = prop_models[stat]
+
+        player = _lookup_player_by_name(session, sport, prop["player_name"])
+        if player is None:
+            continue
+
+        result = _find_player_game(session, player.id, sport, now, hours_ahead)
+        if result is None:
+            continue
+        game, team, opp = result
+
+        try:
+            feats = _build_props_features(session, sport_code, player, team, opp, stat, now)
+        except Exception as exc:
+            log.warning(
+                "score_props.feature_failed", player_id=player.id, stat=stat, error=str(exc)
+            )
+            continue
+
+        if not feats:
+            continue
+
+        x = np.array([[feats.get(n, 0.0) for n in feat_names]], dtype=np.float32)
+        try:
+            quantile_preds = model.predict_row(x[0])
+            median = float(model.predict(x)[0.50][0])
+            dk_line = prop.get("line")
+            p_over = model.implied_over_probability(x[0], dk_line) if dk_line else 0.5
+        except Exception as exc:
+            log.warning("score_props.infer_failed", player_id=player.id, stat=stat, error=str(exc))
+            continue
+
+        # Store quantiles + DK line metadata in quantiles dict
+        quant_store: dict[str, Any] = {str(k): round(v, 2) for k, v in quantile_preds.items()}
+        if dk_line is not None:
+            quant_store["dk_line"] = float(dk_line)
+        if prop.get("over_odds") is not None:
+            quant_store["dk_over_odds"] = float(prop["over_odds"])
+        if prop.get("under_odds") is not None:
+            quant_store["dk_under_odds"] = float(prop["under_odds"])
+
+        features_hash = _hash_features({k: v for k, v in feats.items()})
+
+        _filter = dict(game_id=game.id, model_id=rec.id, target=stat, player_id=player.id)
+        existing = session.query(Prediction).filter_by(**_filter).first()
+
+        if existing is None:
+            pred = Prediction(
+                game_id=game.id,
+                model_id=rec.id,
+                player_id=player.id,
+                target=stat,
+                value=Decimal(str(round(median, 2))),
+                probability=Decimal(str(round(p_over, 4))),
+                quantiles=quant_store,
+                features_hash=features_hash,
+                created_at=now,
+            )
+            try:
+                from sqlalchemy.exc import IntegrityError
+
+                with session.begin_nested():
+                    session.add(pred)
+                    session.flush()
+            except IntegrityError:
+                existing = session.query(Prediction).filter_by(**_filter).first()
+                if existing:
+                    _update_prop_prediction(
+                        existing, median, p_over, quant_store, features_hash, now
+                    )
+            else:
+                count += 1
+                # No pg_notify for individual props — they show up in `/props` command on demand
+        else:
+            _update_prop_prediction(existing, median, p_over, quant_store, features_hash, now)
+            count += 1
+
+    session.flush()
+    log.info("score_props.complete", sport=sport_code, predictions=count)
+    return count
+
+
+def _update_prop_prediction(
+    pred: Prediction,
+    median: float,
+    p_over: float,
+    quant_store: dict[str, Any],
+    features_hash: str,
+    now: Any,
+) -> None:
+    pred.value = Decimal(str(round(median, 2)))
+    pred.probability = Decimal(str(round(p_over, 4)))
+    pred.quantiles = quant_store
+    pred.features_hash = features_hash
+    pred.created_at = now
+
+
+def _lookup_player_by_name(session: Session, sport: Sport, name: str) -> Player | None:
+    players = session.query(Player).filter_by(sport_id=sport.id).all()
+    if not players:
+        return None
+    names = [p.full_name for p in players if p.full_name]
+    matches = difflib.get_close_matches(name, names, n=1, cutoff=0.6)
+    if not matches:
+        return None
+    return next((p for p in players if p.full_name == matches[0]), None)
+
+
+def _find_player_game(
+    session: Session,
+    player_id: int,
+    sport: Sport,
+    now: Any,
+    hours_ahead: int,
+) -> tuple[Game, Team, Team] | None:
+    """Find player's next game. Returns (game, player_team, opponent_team) or None."""
+    since = now - timedelta(hours=4)
+    until = now + timedelta(hours=hours_ahead)
+    _statuses = "('scheduled','pre-game','in progress','delayed','delayed start')"
+
+    row = session.execute(
+        text(f"""
+            SELECT g.id AS game_id, g.home_team_id, g.away_team_id, pgs.team_id
+            FROM player_game_stats pgs
+            JOIN games g ON g.id = pgs.game_id
+            WHERE pgs.player_id = :pid
+              AND g.sport_id  = :sport_id
+              AND g.status    IN {_statuses}
+              AND g.scheduled_utc BETWEEN :since AND :until
+            ORDER BY g.scheduled_utc LIMIT 1
+        """),
+        {"pid": player_id, "sport_id": sport.id, "since": since, "until": until},
+    ).fetchone()
+
+    if row is None:
+        # Fallback: find via most recent team
+        team_row = session.execute(
+            text("""
+                SELECT pgs.team_id FROM player_game_stats pgs
+                JOIN games g ON g.id = pgs.game_id
+                WHERE pgs.player_id = :pid AND g.sport_id = :sport_id
+                ORDER BY g.scheduled_utc DESC LIMIT 1
+            """),
+            {"pid": player_id, "sport_id": sport.id},
+        ).fetchone()
+        if team_row is None:
+            return None
+        team_id = team_row.team_id
+        game_row = session.execute(
+            text(f"""
+                SELECT id, home_team_id, away_team_id FROM games
+                WHERE sport_id = :sport_id
+                  AND (home_team_id = :tid OR away_team_id = :tid)
+                  AND status IN {_statuses}
+                  AND scheduled_utc BETWEEN :since AND :until
+                ORDER BY scheduled_utc LIMIT 1
+            """),
+            {"sport_id": sport.id, "tid": team_id, "since": since, "until": until},
+        ).fetchone()
+        if game_row is None:
+            return None
+        game = session.get(Game, game_row.id)
+        team = session.get(Team, team_id)
+        opp_id = (
+            game_row.away_team_id if team_id == game_row.home_team_id else game_row.home_team_id
+        )
+        opp = session.get(Team, opp_id)
+    else:
+        game = session.get(Game, row.game_id)
+        team = session.get(Team, row.team_id)
+        opp_id = row.away_team_id if row.team_id == row.home_team_id else row.home_team_id
+        opp = session.get(Team, opp_id)
+
+    if game is None or team is None or opp is None:
+        return None
+    return game, team, opp
+
+
+def _build_props_features(
+    session: Session,
+    sport_code: str,
+    player: Player,
+    team: Team,
+    opp: Team,
+    stat: str,
+    now: Any,
+) -> dict[str, Any]:
+    if sport_code == "nba":
+        from src.features.nba.player import build_player_features
+
+        return build_player_features(
+            session=session,
+            player_id=player.id,
+            team_id=team.id,
+            opponent_team_id=opp.id,
+            as_of_utc=now,
+            stat=stat,
+        )
+    elif sport_code == "mlb":
+        if stat in _MLB_PITCHER_STATS:
+            from src.features.mlb.player import build_pitcher_features
+
+            return build_pitcher_features(
+                session=session,
+                player_id=player.id,
+                as_of_utc=now,
+                stat=stat,  # pass full name e.g. PITCHER_K so features match training
+            )
+        else:
+            from src.features.mlb.player import build_batter_features
+
+            return build_batter_features(
+                session=session,
+                player_id=player.id,
+                opponent_pitcher_throws="R",
+                stadium_factor=1.0,
+                as_of_utc=now,
+                stat=stat,
+            )
+    return {}

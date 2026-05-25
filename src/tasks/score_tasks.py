@@ -44,6 +44,24 @@ def rescore_on_lineup_change_mlb() -> dict:
     return {"predictions_written": count}
 
 
+def score_props_upcoming_nba() -> dict:
+    from src.models.score import score_props_upcoming
+
+    with sync_session_factory() as session:
+        count = score_props_upcoming(session, "nba")
+        session.commit()
+    return {"sport": "nba", "predictions_written": count}
+
+
+def score_props_upcoming_mlb() -> dict:
+    from src.models.score import score_props_upcoming
+
+    with sync_session_factory() as session:
+        count = score_props_upcoming(session, "mlb")
+        session.commit()
+    return {"sport": "mlb", "predictions_written": count}
+
+
 # Register as Celery tasks
 from src.tasks.celery_app import app  # noqa: E402
 
@@ -59,3 +77,9 @@ rescore_on_lineup_change_nba = app.task(
 rescore_on_lineup_change_mlb = app.task(
     name="src.tasks.score_tasks.rescore_on_lineup_change_mlb", bind=False
 )(rescore_on_lineup_change_mlb)
+score_props_upcoming_nba = app.task(
+    name="src.tasks.score_tasks.score_props_upcoming_nba", bind=False
+)(score_props_upcoming_nba)
+score_props_upcoming_mlb = app.task(
+    name="src.tasks.score_tasks.score_props_upcoming_mlb", bind=False
+)(score_props_upcoming_mlb)
