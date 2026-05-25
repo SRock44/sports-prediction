@@ -21,7 +21,6 @@ from typing import Any
 from src.db.session import sync_session_factory
 from src.ingest.odds.draftkings import get_player_props
 
-
 # ── Odds math ─────────────────────────────────────────────────────────────────
 
 
@@ -43,7 +42,8 @@ def _fmt_odds(v: float | None) -> str:
 def _load_prop_model(sport: str, stat: str) -> Any | None:
     """Load active prop model for a sport+stat from MLflow. Returns bundle or None."""
     try:
-        from src.db.models import ModelRecord, Sport as SportModel
+        from src.db.models import ModelRecord
+        from src.db.models import Sport as SportModel
         from src.models.registry import load_model
 
         with sync_session_factory() as s:
@@ -68,7 +68,8 @@ def _load_prop_feature_names(sport: str, stat: str) -> list[str]:
     try:
         import json
 
-        from src.db.models import ModelRecord, Sport as SportModel
+        from src.db.models import ModelRecord
+        from src.db.models import Sport as SportModel
         from src.models.score import load_model_feature_names
 
         with sync_session_factory() as s:
@@ -89,7 +90,8 @@ def _load_prop_feature_names(sport: str, stat: str) -> list[str]:
 
 def _lookup_player(session: Any, sport: str, name: str) -> Any | None:
     """Fuzzy-match a player by name within a sport."""
-    from src.db.models import Player, Sport as SportModel
+    from src.db.models import Player
+    from src.db.models import Sport as SportModel
 
     sport_obj = session.query(SportModel).filter_by(code=sport).first()
     if sport_obj is None:
@@ -204,7 +206,9 @@ def _build_player_features_safe(
     return {}
 
 
-def _implied_over_prob(model: Any, features: dict, feature_names: list, line: float) -> float | None:
+def _implied_over_prob(
+    model: Any, features: dict, feature_names: list, line: float
+) -> float | None:
     import numpy as np
 
     try:
@@ -294,9 +298,9 @@ def main(sport: str = "nba", stat_filter: str | None = None, hours: int = 36) ->
         by_game[game_key].append(p)
 
     now = datetime.now(UTC)
-    print(f"\n{'─'*100}")
+    print(f"\n{'─' * 100}")
     print(f"  {sport.upper()} PLAYER PROPS — all lines  ({now.strftime('%Y-%m-%d %H:%M UTC')})")
-    print(f"{'─'*100}")
+    print(f"{'─' * 100}")
 
     with sync_session_factory() as session:
         for game_key in sorted(by_game):
@@ -348,7 +352,7 @@ def main(sport: str = "nba", stat_filter: str | None = None, hours: int = 36) ->
                 )
 
     total = len(props)
-    print(f"\n{'─'*100}")
+    print(f"\n{'─' * 100}")
     print(f"  {total} prop line(s) shown\n")
 
 

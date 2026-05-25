@@ -4,6 +4,7 @@ Revision ID: 0001
 Revises:
 Create Date: 2026-01-01 00:00:00.000000
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -33,7 +34,9 @@ def upgrade() -> None:
     op.create_table(
         "teams",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column("sport_id", sa.Integer, sa.ForeignKey("sports.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "sport_id", sa.Integer, sa.ForeignKey("sports.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("external_id", sa.String(64), nullable=False),
         sa.Column("name", sa.String(128), nullable=False),
         sa.Column("abbrev", sa.String(10)),
@@ -47,7 +50,9 @@ def upgrade() -> None:
     op.create_table(
         "players",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column("sport_id", sa.Integer, sa.ForeignKey("sports.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "sport_id", sa.Integer, sa.ForeignKey("sports.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("external_id", sa.String(64), nullable=False),
         sa.Column("full_name", sa.String(256), nullable=False),
         sa.Column("primary_position", sa.String(20)),
@@ -57,14 +62,21 @@ def upgrade() -> None:
         sa.Column("meta", postgresql.JSONB),
         sa.UniqueConstraint("sport_id", "external_id", name="uq_players_sport_external"),
     )
-    op.create_index("ix_players_full_name_trgm", "players", ["full_name"], postgresql_using="gin",
-                    postgresql_ops={"full_name": "gin_trgm_ops"})
+    op.create_index(
+        "ix_players_full_name_trgm",
+        "players",
+        ["full_name"],
+        postgresql_using="gin",
+        postgresql_ops={"full_name": "gin_trgm_ops"},
+    )
 
     # ── venues ────────────────────────────────────────────────────────────────
     op.create_table(
         "venues",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column("sport_id", sa.Integer, sa.ForeignKey("sports.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "sport_id", sa.Integer, sa.ForeignKey("sports.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("name", sa.String(256), nullable=False),
         sa.Column("city", sa.String(128)),
         sa.Column("lat", sa.Numeric(9, 6)),
@@ -77,7 +89,9 @@ def upgrade() -> None:
     op.create_table(
         "games",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column("sport_id", sa.Integer, sa.ForeignKey("sports.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "sport_id", sa.Integer, sa.ForeignKey("sports.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("external_id", sa.String(64), nullable=False),
         sa.Column("season", sa.Integer),
         sa.Column("scheduled_utc", sa.DateTime(timezone=True)),
@@ -96,26 +110,40 @@ def upgrade() -> None:
     # ── team_game_stats (hypertable) ──────────────────────────────────────────
     op.create_table(
         "team_game_stats",
-        sa.Column("game_id", sa.Integer, sa.ForeignKey("games.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("team_id", sa.Integer, sa.ForeignKey("teams.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "game_id", sa.Integer, sa.ForeignKey("games.id", ondelete="CASCADE"), nullable=False
+        ),
+        sa.Column(
+            "team_id", sa.Integer, sa.ForeignKey("teams.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("stats", postgresql.JSONB),
-        sa.Column("recorded_at", sa.DateTime(timezone=True), nullable=False,
-                  server_default=sa.text("now()")),
+        sa.Column(
+            "recorded_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
         sa.PrimaryKeyConstraint("game_id", "team_id"),
     )
-    op.execute(
-        "SELECT create_hypertable('team_game_stats', 'recorded_at', if_not_exists => TRUE);"
-    )
+    op.execute("SELECT create_hypertable('team_game_stats', 'recorded_at', if_not_exists => TRUE);")
 
     # ── player_game_stats (hypertable) ────────────────────────────────────────
     op.create_table(
         "player_game_stats",
-        sa.Column("game_id", sa.Integer, sa.ForeignKey("games.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("player_id", sa.Integer, sa.ForeignKey("players.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "game_id", sa.Integer, sa.ForeignKey("games.id", ondelete="CASCADE"), nullable=False
+        ),
+        sa.Column(
+            "player_id", sa.Integer, sa.ForeignKey("players.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("team_id", sa.Integer, sa.ForeignKey("teams.id")),
         sa.Column("stats", postgresql.JSONB),
-        sa.Column("recorded_at", sa.DateTime(timezone=True), nullable=False,
-                  server_default=sa.text("now()")),
+        sa.Column(
+            "recorded_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
         sa.PrimaryKeyConstraint("game_id", "player_id"),
     )
     op.execute(
@@ -126,24 +154,30 @@ def upgrade() -> None:
     op.create_table(
         "plays",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column("game_id", sa.Integer, sa.ForeignKey("games.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "game_id", sa.Integer, sa.ForeignKey("games.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("sequence", sa.Integer),
         sa.Column("period", sa.Integer),
         sa.Column("clock", sa.String(16)),
         sa.Column("event_type", sa.String(64)),
         sa.Column("payload", postgresql.JSONB),
-        sa.Column("recorded_at", sa.DateTime(timezone=True), nullable=False,
-                  server_default=sa.text("now()")),
+        sa.Column(
+            "recorded_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
     )
-    op.execute(
-        "SELECT create_hypertable('plays', 'recorded_at', if_not_exists => TRUE);"
-    )
+    op.execute("SELECT create_hypertable('plays', 'recorded_at', if_not_exists => TRUE);")
 
     # ── lineups ───────────────────────────────────────────────────────────────
     op.create_table(
         "lineups",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column("game_id", sa.Integer, sa.ForeignKey("games.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "game_id", sa.Integer, sa.ForeignKey("games.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("team_id", sa.Integer, sa.ForeignKey("teams.id")),
         sa.Column("source", sa.String(64)),
         sa.Column("players", postgresql.JSONB),
@@ -154,7 +188,9 @@ def upgrade() -> None:
     op.create_table(
         "injuries",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column("player_id", sa.Integer, sa.ForeignKey("players.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "player_id", sa.Integer, sa.ForeignKey("players.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("status", sa.String(32), nullable=False),
         sa.Column("reason", sa.Text),
         sa.Column("reported_at", sa.DateTime(timezone=True), nullable=False),
@@ -166,7 +202,9 @@ def upgrade() -> None:
     # ── team_features ─────────────────────────────────────────────────────────
     op.create_table(
         "team_features",
-        sa.Column("team_id", sa.Integer, sa.ForeignKey("teams.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "team_id", sa.Integer, sa.ForeignKey("teams.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("as_of_utc", sa.DateTime(timezone=True), nullable=False),
         sa.Column("sport_id", sa.Integer, sa.ForeignKey("sports.id")),
         sa.Column("features", postgresql.JSONB),
@@ -176,7 +214,9 @@ def upgrade() -> None:
     # ── player_features ───────────────────────────────────────────────────────
     op.create_table(
         "player_features",
-        sa.Column("player_id", sa.Integer, sa.ForeignKey("players.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "player_id", sa.Integer, sa.ForeignKey("players.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("as_of_utc", sa.DateTime(timezone=True), nullable=False),
         sa.Column("features", postgresql.JSONB),
         sa.PrimaryKeyConstraint("player_id", "as_of_utc"),
@@ -185,8 +225,9 @@ def upgrade() -> None:
     # ── matchup_features ──────────────────────────────────────────────────────
     op.create_table(
         "matchup_features",
-        sa.Column("game_id", sa.Integer, sa.ForeignKey("games.id", ondelete="CASCADE"),
-                  primary_key=True),
+        sa.Column(
+            "game_id", sa.Integer, sa.ForeignKey("games.id", ondelete="CASCADE"), primary_key=True
+        ),
         sa.Column("features", postgresql.JSONB),
         sa.Column("computed_at", sa.DateTime(timezone=True)),
     )
@@ -211,7 +252,9 @@ def upgrade() -> None:
     op.create_table(
         "predictions",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column("game_id", sa.Integer, sa.ForeignKey("games.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "game_id", sa.Integer, sa.ForeignKey("games.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("model_id", sa.Integer, sa.ForeignKey("models.id"), nullable=False),
         sa.Column("player_id", sa.Integer, sa.ForeignKey("players.id")),
         sa.Column("target", sa.String(64), nullable=False),
@@ -221,7 +264,9 @@ def upgrade() -> None:
         sa.Column("features_hash", sa.String(64)),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
         sa.UniqueConstraint(
-            "game_id", "model_id", "target",
+            "game_id",
+            "model_id",
+            "target",
             name="uq_predictions_game_model_target",
         ),
     )
@@ -231,8 +276,12 @@ def upgrade() -> None:
     op.create_table(
         "predictions_audit",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column("prediction_id", sa.Integer, sa.ForeignKey("predictions.id", ondelete="CASCADE"),
-                  nullable=False),
+        sa.Column(
+            "prediction_id",
+            sa.Integer,
+            sa.ForeignKey("predictions.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("raw_features", postgresql.JSONB),
         sa.Column("model_version", sa.String(64)),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),

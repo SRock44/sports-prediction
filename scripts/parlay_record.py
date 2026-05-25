@@ -82,47 +82,51 @@ def main(
     settled = won + lost + partial
 
     # Per-leg breakdown
-    by_legs: dict[int, dict[str, int]] = defaultdict(lambda: {"won": 0, "lost": 0, "pending": 0, "partial": 0})
+    by_legs: dict[int, dict[str, int]] = defaultdict(
+        lambda: {"won": 0, "lost": 0, "pending": 0, "partial": 0}
+    )
     for r in rows:
         by_legs[r.n_legs][r.status] = by_legs[r.n_legs].get(r.status, 0) + 1
 
     # Total legs correct out of settled legs
     total_legs_correct = sum(r.n_correct for r in rows if r.status != "pending")
-    total_legs_settled = sum(
-        r.n_legs for r in rows if r.status != "pending"
-    )
+    total_legs_settled = sum(r.n_legs for r in rows if r.status != "pending")
 
     now = datetime.now(UTC)
     scope = sport.upper() if sport else "ALL SPORTS"
     period = f"last {recent_days}d" if recent_days else "all time"
 
-    print(f"\n{'═'*60}")
+    print(f"\n{'═' * 60}")
     print(f"  PARLAY RECORD  —  {scope}  ({period})")
-    print(f"{'═'*60}")
+    print(f"{'═' * 60}")
     print(f"  Total parlays : {total}")
     print(f"  Won           : {won}  ({_pct(won, settled)} of settled)")
     print(f"  Lost          : {lost}")
     print(f"  Partial       : {partial}")
     print(f"  Pending       : {pending}")
     if total_legs_settled > 0:
-        print(f"  Leg accuracy  : {total_legs_correct}/{total_legs_settled}  ({_pct(total_legs_correct, total_legs_settled)})")
+        print(
+            f"  Leg accuracy  : {total_legs_correct}/{total_legs_settled}  ({_pct(total_legs_correct, total_legs_settled)})"
+        )
 
     if by_legs:
-        print(f"\n  By parlay size:")
+        print("\n  By parlay size:")
         for nl in sorted(by_legs):
             bl = by_legs[nl]
             w = bl.get("won", 0)
-            l = bl.get("lost", 0)
+            lost = bl.get("lost", 0)
             p = bl.get("pending", 0)
-            s = w + l + bl.get("partial", 0)
-            print(f"    {nl}-leg: {w}W {l}L {p}P  ({_pct(w, s)} win rate)")
+            s = w + lost + bl.get("partial", 0)
+            print(f"    {nl}-leg: {w}W {lost}L {p}P  ({_pct(w, s)} win rate)")
 
     # ── Recent parlays ────────────────────────────────────────────────────────
     display_n = min(20, len(rows))
     print(f"\n  Recent parlays (showing {display_n} of {total}):")
-    print(f"  {'─'*56}")
-    print(f"  {'DATE':<12} {'USER':<16} {'SP':>3} {'LEGS':>4} {'STATUS':>8} {'CORRECT':>8} {'ODDS':>7}")
-    print(f"  {'─'*56}")
+    print(f"  {'─' * 56}")
+    print(
+        f"  {'DATE':<12} {'USER':<16} {'SP':>3} {'LEGS':>4} {'STATUS':>8} {'CORRECT':>8} {'ODDS':>7}"
+    )
+    print(f"  {'─' * 56}")
 
     status_icon = {"won": "✓ WON", "lost": "✗ LOST", "pending": "… PEND", "partial": "~ PART"}
 
@@ -143,7 +147,7 @@ def main(
             f" {r.n_legs:>4}  {icon:>8}  {correct_str:>7}  {odds_str:>7}"
         )
 
-    print(f"  {'─'*56}")
+    print(f"  {'─' * 56}")
     print(f"  As of {now.strftime('%Y-%m-%d %H:%M UTC')}\n")
 
 

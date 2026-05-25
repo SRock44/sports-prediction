@@ -1,6 +1,6 @@
 """Show only player props where the model has meaningful edge over DK's implied probability.
 
-"Winners" = props where model P(over) − DK implied P(over) ≥ MIN_EDGE (default 4%).
+"Winners" = props where model P(over) - DK implied P(over) >= MIN_EDGE (default 4%).
 Sorted best edge first.
 
 Usage:
@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import difflib
-from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
@@ -38,7 +37,8 @@ def _fmt_odds(v: float | None) -> str:
 
 def _load_prop_model(sport: str, stat: str) -> Any | None:
     try:
-        from src.db.models import ModelRecord, Sport as SportModel
+        from src.db.models import ModelRecord
+        from src.db.models import Sport as SportModel
         from src.models.registry import load_model
 
         with sync_session_factory() as s:
@@ -61,7 +61,8 @@ def _load_feat_names(sport: str, stat: str) -> list[str]:
     try:
         import json
 
-        from src.db.models import ModelRecord, Sport as SportModel
+        from src.db.models import ModelRecord
+        from src.db.models import Sport as SportModel
         from src.models.score import load_model_feature_names
 
         with sync_session_factory() as s:
@@ -81,7 +82,8 @@ def _load_feat_names(sport: str, stat: str) -> list[str]:
 
 
 def _lookup_player(session: Any, sport: str, name: str) -> Any | None:
-    from src.db.models import Player, Sport as SportModel
+    from src.db.models import Player
+    from src.db.models import Sport as SportModel
 
     sport_obj = session.query(SportModel).filter_by(code=sport).first()
     if sport_obj is None:
@@ -183,7 +185,12 @@ def _build_feats(session: Any, player: Any, team: Any, opp: Any, stat: str, spor
     return {}
 
 
-def main(sport: str = "nba", stat_filter: str | None = None, min_edge: float = _DEFAULT_MIN_EDGE, hours: int = 36) -> None:
+def main(
+    sport: str = "nba",
+    stat_filter: str | None = None,
+    min_edge: float = _DEFAULT_MIN_EDGE,
+    hours: int = 36,
+) -> None:
     print(f"\nFetching DK {sport.upper()} player props…")
     props = get_player_props(sport)
 
@@ -254,7 +261,9 @@ def main(sport: str = "nba", stat_filter: str | None = None, min_edge: float = _
                 continue
 
             dk_over_implied = _american_to_implied(prop["over_odds"])
-            dk_under_implied = _american_to_implied(prop["under_odds"]) if prop["under_odds"] else None
+            dk_under_implied = (
+                _american_to_implied(prop["under_odds"]) if prop["under_odds"] else None
+            )
 
             over_edge = model_over - dk_over_implied
             under_edge = (model_under - dk_under_implied) if dk_under_implied else None
@@ -267,31 +276,35 @@ def main(sport: str = "nba", stat_filter: str | None = None, min_edge: float = _
                 model_median = None
 
             if over_edge >= min_edge:
-                edges.append({
-                    "player_name": prop["player_name"],
-                    "stat": stat,
-                    "line": prop["line"],
-                    "direction": "OVER",
-                    "edge": over_edge,
-                    "model_prob": model_over,
-                    "dk_implied": dk_over_implied,
-                    "odds": prop["over_odds"],
-                    "model_median": model_median,
-                    "game": f"{prop['away_team']} @ {prop['home_team']}",
-                })
+                edges.append(
+                    {
+                        "player_name": prop["player_name"],
+                        "stat": stat,
+                        "line": prop["line"],
+                        "direction": "OVER",
+                        "edge": over_edge,
+                        "model_prob": model_over,
+                        "dk_implied": dk_over_implied,
+                        "odds": prop["over_odds"],
+                        "model_median": model_median,
+                        "game": f"{prop['away_team']} @ {prop['home_team']}",
+                    }
+                )
             if under_edge is not None and under_edge >= min_edge:
-                edges.append({
-                    "player_name": prop["player_name"],
-                    "stat": stat,
-                    "line": prop["line"],
-                    "direction": "UNDER",
-                    "edge": under_edge,
-                    "model_prob": model_under,
-                    "dk_implied": dk_under_implied,
-                    "odds": prop["under_odds"],
-                    "model_median": model_median,
-                    "game": f"{prop['away_team']} @ {prop['home_team']}",
-                })
+                edges.append(
+                    {
+                        "player_name": prop["player_name"],
+                        "stat": stat,
+                        "line": prop["line"],
+                        "direction": "UNDER",
+                        "edge": under_edge,
+                        "model_prob": model_under,
+                        "dk_implied": dk_under_implied,
+                        "odds": prop["under_odds"],
+                        "model_median": model_median,
+                        "game": f"{prop['away_team']} @ {prop['home_team']}",
+                    }
+                )
 
     if not edges:
         print(f"  No prop edges ≥ {min_edge:.0%} found.\n")
@@ -300,16 +313,18 @@ def main(sport: str = "nba", stat_filter: str | None = None, min_edge: float = _
     edges.sort(key=lambda x: x["edge"], reverse=True)
 
     now = datetime.now(UTC)
-    print(f"\n{'─'*90}")
-    print(f"  {sport.upper()} PROP WINNERS — edge ≥ {min_edge:.0%}  "
-          f"({now.strftime('%Y-%m-%d %H:%M UTC')})")
-    print(f"{'─'*90}")
+    print(f"\n{'─' * 90}")
+    print(
+        f"  {sport.upper()} PROP WINNERS — edge ≥ {min_edge:.0%}  "
+        f"({now.strftime('%Y-%m-%d %H:%M UTC')})"
+    )
+    print(f"{'─' * 90}")
     header = (
         f"  {'PLAYER':<24}  {'STAT':<8}  {'LINE':>5}  {'DIR':>5}"
         f"  {'MODEL%':>7}  {'DK%':>7}  {'EDGE':>6}  {'ODDS':>6}  {'MED':>5}"
     )
     print(header)
-    print(f"{'─'*90}")
+    print(f"{'─' * 90}")
 
     for e in edges:
         med_str = f"{e['model_median']:5.1f}" if e["model_median"] is not None else "  n/a"
@@ -320,7 +335,7 @@ def main(sport: str = "nba", stat_filter: str | None = None, min_edge: float = _
         )
         print(f"    → {e['game']}")
 
-    print(f"{'─'*90}")
+    print(f"{'─' * 90}")
     print(f"  {len(edges)} qualifying edge(s)\n")
 
 

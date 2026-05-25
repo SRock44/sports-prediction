@@ -19,9 +19,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import sys
 import time
-from datetime import timedelta
 
 from sqlalchemy import text
 
@@ -53,8 +51,12 @@ def _patch_game(session, game_row, dry_run: bool) -> bool:
     if not home_form.get("home_sp_form_known") and not away_form.get("away_sp_form_known"):
         return False
 
-    sp_form_era_diff = home_form.get("home_sp_form_era", 4.50) - away_form.get("away_sp_form_era", 4.50)
-    sp_form_k_pct_diff = home_form.get("home_sp_form_k_pct", 0.22) - away_form.get("away_sp_form_k_pct", 0.22)
+    sp_form_era_diff = home_form.get("home_sp_form_era", 4.50) - away_form.get(
+        "away_sp_form_era", 4.50
+    )
+    sp_form_k_pct_diff = home_form.get("home_sp_form_k_pct", 0.22) - away_form.get(
+        "away_sp_form_k_pct", 0.22
+    )
 
     patch = {
         **home_form,
@@ -68,6 +70,7 @@ def _patch_game(session, game_row, dry_run: bool) -> bool:
 
     # Merge patch into existing JSONB (|| operator in postgres)
     import json
+
     session.execute(
         text("""
             UPDATE matchup_features
@@ -135,7 +138,7 @@ def main(batch_size: int = 500, dry_run: bool = False, season: int | None = None
         eta = (total - done) / rate if rate > 0 else 0
         print(
             f"  [{done:>5}/{total}]  patched={patched}  skipped={skipped}"
-            f"  {rate:.1f} games/s  ETA {eta/60:.1f}m"
+            f"  {rate:.1f} games/s  ETA {eta / 60:.1f}m"
         )
 
     elapsed = time.time() - t0

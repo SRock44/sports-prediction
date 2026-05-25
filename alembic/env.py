@@ -2,6 +2,7 @@
 
 Run with the migration user (DDL rights) — not the app user.
 """
+
 from __future__ import annotations
 
 from logging.config import fileConfig

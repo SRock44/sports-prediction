@@ -9,6 +9,7 @@ or Base.metadata.create_all). It calls create_hypertable on the three tables
 that are designed for time-series workloads. The operation is a no-op if
 TimescaleDB is not installed (e.g. plain Postgres in CI).
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -23,9 +24,7 @@ def upgrade() -> None:
     conn = op.get_bind()
 
     # Check TimescaleDB is available; skip gracefully in plain-Postgres environments.
-    result = conn.execute(
-        "SELECT count(*) FROM pg_extension WHERE extname = 'timescaledb'"
-    )
+    result = conn.execute("SELECT count(*) FROM pg_extension WHERE extname = 'timescaledb'")
     if result.scalar() == 0:
         return
 

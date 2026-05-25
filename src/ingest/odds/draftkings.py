@@ -287,9 +287,7 @@ def _parse_props(data: dict[str, Any]) -> list[dict[str, Any]]:
 
         over_odds = _parse_american(over_sel.get("displayOdds", {}).get("american"))
         under_odds = (
-            _parse_american(under_sel.get("displayOdds", {}).get("american"))
-            if under_sel
-            else None
+            _parse_american(under_sel.get("displayOdds", {}).get("american")) if under_sel else None
         )
 
         event_id = str(market.get("eventId", ""))

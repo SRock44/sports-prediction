@@ -26,21 +26,23 @@ def main(sport: str = "nba", n: int = 10, bookmaker: str = "draftkings") -> None
         picks = select_top_picks(s, sport, bookmaker=bookmaker, n=n)
 
     if not picks:
-        print(f"\nNo qualifying {sport.upper()} picks right now (edge/confidence thresholds not met).\n")
+        print(
+            f"\nNo qualifying {sport.upper()} picks right now (edge/confidence thresholds not met).\n"
+        )
         return
 
     from datetime import UTC, datetime
+
     now = datetime.now(UTC)
 
-    print(f"\n{'─'*72}")
-    print(f"  {sport.upper()} TOP PICKS — edge filter applied  "
-          f"({now.strftime('%Y-%m-%d %H:%M UTC')})")
-    print(f"{'─'*72}")
-    header = (
-        f"  {'PICK':<28} {'PROB':>6}  {'IMPLIED':>7}  {'EDGE':>6}  {'ODDS':>6}"
+    print(f"\n{'─' * 72}")
+    print(
+        f"  {sport.upper()} TOP PICKS — edge filter applied  ({now.strftime('%Y-%m-%d %H:%M UTC')})"
     )
+    print(f"{'─' * 72}")
+    header = f"  {'PICK':<28} {'PROB':>6}  {'IMPLIED':>7}  {'EDGE':>6}  {'ODDS':>6}"
     print(header)
-    print(f"{'─'*72}")
+    print(f"{'─' * 72}")
 
     for p in picks:
         pick_team = p.home_team if p.pick == "home" else p.away_team
@@ -52,7 +54,7 @@ def main(sport: str = "nba", n: int = 10, bookmaker: str = "draftkings") -> None
             f"  {p.edge:>+6.1%}  {_fmt_odds(p.odds_american):>6}"
         )
 
-    print(f"{'─'*72}")
+    print(f"{'─' * 72}")
     print(f"  {len(picks)} qualifying pick(s)\n")
 
 

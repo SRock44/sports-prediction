@@ -9,7 +9,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from sqlalchemy import text
 
@@ -68,17 +68,20 @@ def main(sport: str = "nba", hours: int = 36) -> None:
         return
 
     now = datetime.now(UTC)
-    print(f"\n{'─'*78}")
-    print(f"  {sport.upper()} MONEYLINE PREDICTIONS — all games  "
-          f"({now.strftime('%Y-%m-%d %H:%M UTC')})")
-    print(f"{'─'*78}")
-    header = f"  {'MATCHUP':<35} {'TIME':>8}  {'HOME%':>6}  {'PICK':>4}  {'DK HOME':>7}  {'DK AWAY':>7}"
+    print(f"\n{'─' * 78}")
+    print(
+        f"  {sport.upper()} MONEYLINE PREDICTIONS — all games  "
+        f"({now.strftime('%Y-%m-%d %H:%M UTC')})"
+    )
+    print(f"{'─' * 78}")
+    header = (
+        f"  {'MATCHUP':<35} {'TIME':>8}  {'HOME%':>6}  {'PICK':>4}  {'DK HOME':>7}  {'DK AWAY':>7}"
+    )
     print(header)
-    print(f"{'─'*78}")
+    print(f"{'─' * 78}")
 
     for r in games:
         home_prob = float(r.home_prob)
-        away_prob = 1.0 - home_prob
         pick_label = r.home_team.split()[-1] if home_prob >= 0.5 else r.away_team.split()[-1]
 
         # Convert scheduled_utc (may be offset-aware or naive) to local-ish display
@@ -94,7 +97,7 @@ def main(sport: str = "nba", hours: int = 36) -> None:
             f"  {_fmt_odds(r.dk_home_ml):>7}  {_fmt_odds(r.dk_away_ml):>7}"
         )
 
-    print(f"{'─'*78}")
+    print(f"{'─' * 78}")
     print(f"  {len(games)} game(s)\n")
 
 
