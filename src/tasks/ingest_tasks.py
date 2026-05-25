@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from celery import shared_task
 
@@ -12,16 +13,29 @@ from src.ingest.common import IngestResult
 
 log = get_logger(__name__)
 
+_ET = ZoneInfo("America/New_York")
+
+
+def _yesterday_et_window() -> tuple[datetime, datetime]:
+    """Return (start, end) UTC datetimes covering yesterday in ET.
+
+    Uses ET midnight boundaries so late games (8-11 PM ET) that roll past
+    UTC midnight are still included in yesterday's ingest window.
+    """
+    now_et = datetime.now(_ET)
+    yesterday_et = (now_et - timedelta(days=1)).date()
+    day_start = datetime(yesterday_et.year, yesterday_et.month, yesterday_et.day, tzinfo=_ET)
+    return day_start.astimezone(UTC), (day_start + timedelta(days=1)).astimezone(UTC)
+
 
 @shared_task(name="src.tasks.ingest_tasks.ingest_yesterday_nba", bind=True, max_retries=3)
 def ingest_yesterday_nba(self: Any) -> dict:
-    """Ingest box scores only for games completed yesterday — not the whole season."""
+    """Ingest box scores for games from yesterday ET (ET-midnight boundaries)."""
     from src.db.models import Game, Sport
     from src.ingest.nba.games import ingest_box_scores
 
-    yesterday = date.today() - timedelta(days=1)
-    day_start = datetime(yesterday.year, yesterday.month, yesterday.day, tzinfo=UTC)
-    day_end = day_start + timedelta(days=1)
+    day_start, day_end = _yesterday_et_window()
+    now_utc = datetime.now(UTC)
 
     total = IngestResult()
     with sync_session_factory() as session:
@@ -29,13 +43,15 @@ def ingest_yesterday_nba(self: Any) -> dict:
         if sport is None:
             return {"inserted": 0, "updated": 0}
 
+        # Include any game whose tip-off was yesterday ET and has already started —
+        # even if the live poller hasn't flipped it to "final" yet.
         games = (
             session.query(Game)
             .filter(
                 Game.sport_id == sport.id,
                 Game.scheduled_utc >= day_start,
                 Game.scheduled_utc < day_end,
-                Game.status == "final",
+                Game.scheduled_utc < now_utc,
             )
             .all()
         )
