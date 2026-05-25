@@ -19,7 +19,13 @@ BEAT_SCHEDULE = {
         "task": "src.tasks.ingest_tasks.ingest_schedule_mlb",
         "schedule": crontab(hour=8, minute=0),  # 3:00 AM EST (parallel)
     },
-    # ── Daily ingest (4:00 AM EST / 9:00 AM UTC — box scores finalized) ────────
+    # ── Daily ingest (runs twice for NBA to catch late/playoff games past midnight UTC)
+    # First pass: 1:30 AM EST / 6:30 AM UTC — catches games ending ~11 PM-1 AM ET
+    # Second pass: 4:00 AM EST / 9:00 AM UTC — catches any stragglers + MLB
+    "ingest-nba-yesterday-early": {
+        "task": "src.tasks.ingest_tasks.ingest_yesterday_nba",
+        "schedule": crontab(hour=6, minute=30),  # 1:30 AM EST
+    },
     "ingest-nba-yesterday": {
         "task": "src.tasks.ingest_tasks.ingest_yesterday_nba",
         "schedule": crontab(hour=9, minute=0),  # 4:00 AM EST
