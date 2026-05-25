@@ -28,11 +28,24 @@ _GAME_LINES_CATEGORY = {
     "mlb": 493,
 }
 
-# Player prop category IDs per sport.  DK uses a "Player Props" top-level
-# category; subcategory IDs cover individual stat markets.
-_PROP_CATEGORY = {
-    "nba": 1000,
-    "mlb": 1001,
+# Known individual player prop category IDs per sport (NBA uses category-level endpoints).
+# These are curated to include only single-player markets (no combined/duo props).
+# DK changes these occasionally; add new ones as discovered.
+_PROP_CATEGORIES: dict[str, list[int]] = {
+    "nba": [1215, 1216, 1217, 1218, 583, 1293, 1280],  # Pts/Reb/Ast/3PM/PRA/Def milestones
+}
+
+# MLB batter/pitcher props live in subcategories — the category-level endpoint only returns
+# HR milestones. Each tuple is (category_id, subcategory_id).
+_PROP_SUBCATEGORIES: dict[str, list[tuple[int, int]]] = {
+    "mlb": [
+        (743, 6719),  # Hits O/U → H
+        (743, 6607),  # Total Bases O/U → TB
+        (743, 8025),  # RBIs O/U → RBI
+        (743, 17319),  # Home Runs milestone → HR
+        (1031, 15221),  # Strikeouts Thrown O/U → PITCHER_K
+        (1031, 17412),  # Earned Runs Allowed O/U → PITCHER_ER
+    ],
 }
 
 # Stat keyword → canonical stat name (matches train_props.py _props_stats).
@@ -46,11 +59,12 @@ _MARKET_TO_STAT: dict[str, str] = {
     "threes": "3PM",
     "pra": "PRA",
     "pts+reb": "PRA",
-    "strikeouts": "K",
+    "strikeouts thrown": "PITCHER_K",
     "pitcher strikeouts": "PITCHER_K",
+    "strikeouts": "PITCHER_K",
     "hits allowed": "PITCHER_H",
     "earned runs": "PITCHER_ER",
-    " hits": "H",
+    "hits": "H",
     "home runs": "HR",
     "total bases": "TB",
     "rbi": "RBI",
@@ -154,39 +168,77 @@ def get_player_props(sport_code: str) -> list[dict[str, Any]]:
 
     Returns an empty list if the category is unavailable or no props are found.
     """
-    league_id = _LEAGUE_IDS.get(sport_code.lower())
+    sport = sport_code.lower()
+    league_id = _LEAGUE_IDS.get(sport)
     if not league_id:
         log.warning("dk.props.no_league_id", sport=sport_code)
         return []
 
-    # First try the known prop category; fall back to category discovery.
-    known_cat = _PROP_CATEGORY.get(sport_code.lower())
-    candidates = [known_cat] if known_cat else []
-    candidates += _discover_prop_categories(league_id, exclude=candidates)
-
     all_props: list[dict[str, Any]] = []
-    seen_cats: set[int] = set()
 
-    for cat_id in candidates:
-        if cat_id in seen_cats:
-            continue
-        seen_cats.add(cat_id)
-        try:
-            resp = requests.get(
-                f"{_BASE}/leagues/{league_id}/categories/{cat_id}",
-                headers=_HEADERS,
-                timeout=15,
-            )
-            if resp.status_code == 404:
+    subcats = _PROP_SUBCATEGORIES.get(sport, [])
+    if subcats:
+        # Sports with explicit subcategory routing (MLB): each stat lives in its own subcategory.
+        # The category-level endpoint only returns milestone HR markets, so we hit subcategories.
+        seen_pairs: set[tuple[int, int]] = set()
+        for cat_id, subcat_id in subcats:
+            if (cat_id, subcat_id) in seen_pairs:
                 continue
-            resp.raise_for_status()
-            data = resp.json()
-            parsed = _parse_props(data)
-            if parsed:
-                log.info("dk.props.fetched", sport=sport_code, cat=cat_id, n=len(parsed))
-                all_props.extend(parsed)
-        except Exception as exc:
-            log.warning("dk.props.cat_failed", sport=sport_code, cat=cat_id, error=str(exc))
+            seen_pairs.add((cat_id, subcat_id))
+            try:
+                resp = requests.get(
+                    f"{_BASE}/leagues/{league_id}/categories/{cat_id}/subcategories/{subcat_id}",
+                    headers=_HEADERS,
+                    timeout=15,
+                )
+                if resp.status_code == 404:
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                parsed = _parse_props(data)
+                if parsed:
+                    log.info(
+                        "dk.props.fetched",
+                        sport=sport_code,
+                        cat=cat_id,
+                        subcat=subcat_id,
+                        n=len(parsed),
+                    )
+                    all_props.extend(parsed)
+            except Exception as exc:
+                log.warning(
+                    "dk.props.subcat_failed",
+                    sport=sport_code,
+                    cat=cat_id,
+                    subcat=subcat_id,
+                    error=str(exc),
+                )
+    else:
+        # NBA and others: category-level endpoints contain all props directly.
+        candidates = list(_PROP_CATEGORIES.get(sport, []))
+        if not candidates:
+            candidates = _discover_prop_categories(league_id, exclude=[])
+        seen_cats: set[int] = set()
+        for cat_id in candidates:
+            if cat_id in seen_cats:
+                continue
+            seen_cats.add(cat_id)
+            try:
+                resp = requests.get(
+                    f"{_BASE}/leagues/{league_id}/categories/{cat_id}",
+                    headers=_HEADERS,
+                    timeout=15,
+                )
+                if resp.status_code == 404:
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                parsed = _parse_props(data)
+                if parsed:
+                    log.info("dk.props.fetched", sport=sport_code, cat=cat_id, n=len(parsed))
+                    all_props.extend(parsed)
+            except Exception as exc:
+                log.warning("dk.props.cat_failed", sport=sport_code, cat=cat_id, error=str(exc))
 
     # Deduplicate by (player_name, stat, line) keeping first occurrence
     seen: set[tuple[str, str, float]] = set()
@@ -233,83 +285,162 @@ def _detect_stat(market_name: str) -> str | None:
 
 
 def _parse_props(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Parse a DK category response into normalized player-prop dicts."""
+    """Parse a DK category response into normalized player-prop dicts.
+
+    Handles both traditional Over/Under markets and Milestone markets
+    (e.g., "Score 25+" style bets common during NBA/MLB playoffs).
+    """
     events = {str(ev["id"]): ev for ev in data.get("events", [])}
     markets = {str(m["id"]): m for m in data.get("markets", [])}
+    selections = data.get("selections", [])
 
-    # Group selections by market_id so we can pair Over/Under
-    market_selections: dict[str, dict[str, Any]] = {}
-    for sel in data.get("selections", []):
+    # Group selections by market_id
+    ou_sels: dict[str, dict[str, Any]] = {}  # over/under markets
+    milestone_sels: dict[str, list[dict[str, Any]]] = {}  # milestone markets
+
+    for sel in selections:
         mid = str(sel.get("marketId", ""))
         outcome = (sel.get("outcomeType") or "").lower()
-        if outcome not in ("over", "under"):
-            continue
-        if mid not in market_selections:
-            market_selections[mid] = {}
-        market_selections[mid][outcome] = sel
+        if outcome in ("over", "under"):
+            if mid not in ou_sels:
+                ou_sels[mid] = {}
+            ou_sels[mid][outcome] = sel
+        elif sel.get("milestoneValue") is not None or (sel.get("label") or "").endswith("+"):
+            milestone_sels.setdefault(mid, []).append(sel)
 
     props: list[dict[str, Any]] = []
 
-    for mid, outcomes in market_selections.items():
-        over_sel = outcomes.get("over")
-        under_sel = outcomes.get("under")
-        if not over_sel:
-            continue
-
-        market = markets.get(mid)
-        if not market:
-            continue
-
-        market_name = (market.get("marketType") or {}).get("name", "")
-        stat = _detect_stat(market_name)
-        if stat is None:
-            continue
-
-        # Player name: prefer explicit participant, fall back to parsing market name
-        player_name = ""
-        for p in market.get("participants", []):
-            n = (p.get("metadata") or {}).get("rosterName") or p.get("name", "")
-            if n:
-                player_name = n
-                break
-        if not player_name:
-            # "LeBron James - Points O/U 24.5" → "LeBron James"
-            parts = market_name.split(" - ")
-            if len(parts) >= 2:
-                player_name = parts[0].strip()
-
-        if not player_name:
-            continue
-
-        line = over_sel.get("points")
-        if line is None:
-            continue
-
-        over_odds = _parse_american(over_sel.get("displayOdds", {}).get("american"))
-        under_odds = (
-            _parse_american(under_sel.get("displayOdds", {}).get("american")) if under_sel else None
-        )
-
-        event_id = str(market.get("eventId", ""))
-        event = events.get(event_id, {})
-        home_team = away_team = ""
+    def _extract_event_teams(event_id: str) -> tuple[str, str]:
+        event = events.get(str(event_id), {})
+        home = away = ""
         for p in event.get("participants", []):
             role = p.get("venueRole", "")
             name = (p.get("metadata") or {}).get("rosettaTeamName") or p.get("name", "")
             if role == "Home":
-                home_team = name
+                home = name
             elif role == "Away":
-                away_team = name
+                away = name
+        return home, away
 
+    def _player_from_market(market: dict[str, Any]) -> str:
+        for p in market.get("participants", []):
+            n = (p.get("metadata") or {}).get("rosterName") or p.get("name", "")
+            if n:
+                return n
+        mname = (market.get("name") or "").strip()
+        # "Player Name - Stat Type" format
+        parts = mname.split(" - ")
+        if len(parts) >= 2:
+            return parts[0].strip()
+        # Subcategory O/U format: "Luis Arraez Hits O/U" — strip the market type suffix
+        mtype = (market.get("marketType") or {}).get("name", "").strip()
+        if mtype and mname.endswith(mtype):
+            return mname[: -len(mtype)].strip()
+        return ""
+
+    # ── Traditional Over/Under markets ───────────────────────────────────────
+    for mid, outcomes in ou_sels.items():
+        over_sel = outcomes.get("over")
+        if not over_sel:
+            continue
+        market = markets.get(mid)
+        if not market:
+            continue
+        market_name = (market.get("marketType") or {}).get("name", "")
+        stat = _detect_stat(market_name)
+        if stat is None:
+            continue
+        player_name = _player_from_market(market)
+        if not player_name:
+            continue
+        line = over_sel.get("points")
+        if line is None:
+            continue
+        under_sel = outcomes.get("under")
+        home, away = _extract_event_teams(market.get("eventId", ""))
+        event = events.get(str(market.get("eventId", "")), {})
         props.append(
             {
                 "player_name": player_name,
                 "stat": stat,
                 "line": float(line),
+                "over_odds": _parse_american(over_sel.get("displayOdds", {}).get("american")),
+                "under_odds": _parse_american(under_sel.get("displayOdds", {}).get("american"))
+                if under_sel
+                else None,
+                "home_team": home,
+                "away_team": away,
+                "commence_time": event.get("startEventDate", ""),
+                "bookmaker": "draftkings",
+            }
+        )
+
+    # ── Milestone markets ("Score 25+") ───────────────────────────────────────
+    for mid, sels in milestone_sels.items():
+        market = markets.get(mid)
+        if not market:
+            continue
+        market_name = (market.get("marketType") or {}).get("name", "")
+        stat = _detect_stat(market_name)
+        if stat is None:
+            stat = _detect_stat(market.get("name", ""))
+        if stat is None:
+            continue
+
+        # Player name: check market participants first, then fall back to selection participants
+        player_name = _player_from_market(market)
+        if not player_name and sels:
+            for p in sels[0].get("participants", []):
+                if p.get("type") == "Player":
+                    n = (p.get("metadata") or {}).get("rosterName") or p.get("name", "")
+                    if n:
+                        player_name = n
+                        break
+        if not player_name:
+            # Last resort: parse from market display name e.g. "Donovan Mitchell Points"
+            mname = market.get("name", "")
+            for kw in _MARKET_TO_STAT:
+                if kw in mname.lower():
+                    player_name = mname.lower().replace(kw, "").strip().title()
+                    break
+
+        # Skip combined / multi-player markets
+        mtype_lower = (market.get("marketType") or {}).get("name", "").lower()
+        mname_lower = (market.get("name") or "").lower()
+        if any(
+            kw in mtype_lower or kw in mname_lower for kw in ("combined", "either", " & ", " or ")
+        ):
+            continue
+        if not player_name or " & " in player_name or " or " in player_name.lower():
+            continue
+
+        # Pick the milestone closest to 50/50 (abs(odds) closest to 100)
+        best_sel = min(
+            sels,
+            key=lambda s: abs(
+                abs(_parse_american(s.get("displayOdds", {}).get("american")) or -110) - 100
+            ),
+        )
+        milestone_val = best_sel.get("milestoneValue")
+        if milestone_val is None:
+            label = (best_sel.get("label") or "").rstrip("+").strip()
+            try:
+                milestone_val = float(label)
+            except ValueError:
+                continue
+
+        over_odds = _parse_american(best_sel.get("displayOdds", {}).get("american"))
+        event = events.get(str(market.get("eventId", "")), {})
+        home, away = _extract_event_teams(market.get("eventId", ""))
+        props.append(
+            {
+                "player_name": player_name,
+                "stat": stat,
+                "line": float(milestone_val) - 0.5,  # "25+" → line of 24.5
                 "over_odds": over_odds,
-                "under_odds": under_odds,
-                "home_team": home_team,
-                "away_team": away_team,
+                "under_odds": None,
+                "home_team": home,
+                "away_team": away,
                 "commence_time": event.get("startEventDate", ""),
                 "bookmaker": "draftkings",
             }
