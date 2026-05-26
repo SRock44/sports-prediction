@@ -66,6 +66,164 @@ _BALLPARK_CF_BEARING: dict[str, float] = {
 _INDOOR_PARKS: set[str] = {"TB", "MIA", "HOU", "MIN", "ARI", "TOR", "SEA"}
 
 
+# Coordinates for all 30 MLB outdoor + retractable-roof parks.
+_BALLPARK_COORDS: dict[str, tuple[float, float]] = {
+    "ARI": (33.4455, -112.0667),
+    "ATL": (33.8908, -84.4678),
+    "BAL": (39.2839, -76.6216),
+    "BOS": (42.3467, -71.0972),
+    "CHC": (41.9484, -87.6553),
+    "CWS": (41.8299, -87.6338),
+    "CIN": (39.0979, -84.5082),
+    "CLE": (41.4962, -81.6852),
+    "COL": (39.7559, -104.9942),
+    "DET": (42.3390, -83.0485),
+    "HOU": (29.7573, -95.3555),
+    "KC": (39.0517, -94.4803),
+    "LAA": (33.8003, -117.8827),
+    "LAD": (34.0739, -118.2400),
+    "MIA": (25.7781, -80.2197),
+    "MIL": (43.0280, -87.9712),
+    "MIN": (44.9817, -93.2776),
+    "NYM": (40.7571, -73.8458),
+    "NYY": (40.8296, -73.9262),
+    "OAK": (37.7516, -122.2005),
+    "PHI": (39.9056, -75.1665),
+    "PIT": (40.4469, -80.0057),
+    "SD": (32.7076, -117.1570),
+    "SF": (37.7786, -122.3893),
+    "SEA": (47.5914, -122.3325),
+    "STL": (38.6226, -90.1928),
+    "TB": (27.7683, -82.6534),
+    "TEX": (32.7513, -97.0831),
+    "TOR": (43.6414, -79.3894),
+    "WSH": (38.8730, -77.0074),
+}
+
+_OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+
+
+def populate_venue_coords(session: Session) -> int:
+    """One-time: populate lat/lon on all MLB venue records from the known coords dict."""
+    from src.db.models import Sport, Venue
+
+    sport = session.query(Sport).filter_by(code="mlb").first()
+    if sport is None:
+        return 0
+
+    updated = 0
+    venues = session.query(Venue).filter_by(sport_id=sport.id).all()
+    for v in venues:
+        abbrev = (v.meta or {}).get("team_abbrev", "")
+        coords = _BALLPARK_COORDS.get(abbrev)
+        if coords and (v.lat is None or v.lon is None):
+            v.lat, v.lon = coords
+            updated += 1
+    session.flush()
+    return updated
+
+
+def ingest_weather_historical(session: Session, season_from: int = 2022) -> IngestResult:
+    """Backfill game-time weather for all historical final MLB games using Open-Meteo archive.
+
+    Groups games by (venue, date) to minimise API calls — one request per venue-day.
+    Skips indoor parks and games that already have weather stored.
+    """
+    import time
+    from collections import defaultdict
+
+    result = IngestResult()
+    sport = session.query(Sport).filter_by(code="mlb").first()
+    if sport is None:
+        return result
+
+    games = (
+        session.query(Game)
+        .join(Game.venue)
+        .filter(
+            Game.sport_id == sport.id,
+            Game.status == "final",
+            Game.season >= season_from,
+            Game.venue_id.isnot(None),
+        )
+        .all()
+    )
+
+    # Skip games that already have weather stored
+    from src.db.models.odds import GameWeather
+
+    existing_ids = {gw.game_id for gw in session.query(GameWeather.game_id).all()}
+
+    # Group by (venue_abbrev, date) to batch API calls
+    venue_date_games: dict[tuple, list] = defaultdict(list)
+    for game in games:
+        if game.id in existing_ids:
+            continue
+        venue = game.venue
+        if venue is None or venue.lat is None or venue.lon is None:
+            continue
+        abbrev = (venue.meta or {}).get("team_abbrev", "")
+        if abbrev in _INDOOR_PARKS:
+            continue
+        date_str = game.scheduled_utc.strftime("%Y-%m-%d")
+        venue_date_games[(abbrev, date_str, venue.lat, venue.lon)].append(game)
+
+    log.info("weather_backfill.start", groups=len(venue_date_games))
+
+    for (abbrev, date_str, lat, lon), day_games in venue_date_games.items():
+        try:
+            resp = requests.get(
+                _OPEN_METEO_ARCHIVE_URL,
+                params={
+                    "latitude": lat,
+                    "longitude": lon,
+                    "hourly": "temperature_2m,windspeed_10m,winddirection_10m,precipitation_probability,weathercode",
+                    "temperature_unit": "fahrenheit",
+                    "windspeed_unit": "mph",
+                    "timezone": "UTC",
+                    "start_date": date_str,
+                    "end_date": date_str,
+                },
+                timeout=15,
+            )
+            resp.raise_for_status()
+            hourly = resp.json().get("hourly", {})
+
+            for game in day_games:
+                hour = min(game.scheduled_utc.hour, 23)
+                temps = hourly.get("temperature_2m", [])
+                winds = hourly.get("windspeed_10m", [])
+                bearings = hourly.get("winddirection_10m", [])
+                precips = hourly.get("precipitation_probability", [])
+                codes = hourly.get("weathercode", [])
+
+                idx = min(hour, len(temps) - 1) if temps else 0
+                code = codes[idx] if idx < len(codes) else None
+
+                raw_precip = precips[idx] if idx < len(precips) else None
+                session.add(
+                    GameWeather(
+                        game_id=game.id,
+                        temp_f=temps[idx] if idx < len(temps) else None,
+                        wind_mph=winds[idx] if idx < len(winds) else None,
+                        wind_bearing=bearings[idx] if idx < len(bearings) else None,
+                        precip_prob=(raw_precip / 100.0) if raw_precip is not None else None,
+                        conditions=_wmo_code_to_str(code),
+                        fetched_at=datetime.now(UTC),
+                    )
+                )
+                result.rows_inserted += 1
+
+            time.sleep(0.05)  # ~20 req/s — well within Open-Meteo free limits
+        except Exception as exc:
+            log.warning("weather_backfill.error", abbrev=abbrev, date=date_str, error=str(exc))
+            result.errors.append(str(exc))
+
+    session.flush()
+    log.info("weather_backfill.done", inserted=result.rows_inserted, errors=len(result.errors))
+    return result
+
+
 def ingest_weather_for_upcoming(session: Session, lookahead_days: int = 5) -> IngestResult:
     """Fetch weather for all MLB games scheduled in the next N days."""
     from datetime import timedelta

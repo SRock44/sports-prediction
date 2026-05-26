@@ -460,6 +460,29 @@ def ingest_odds_close(self: Any) -> dict:
     return {"inserted": total}
 
 
+@shared_task(name="src.tasks.ingest_tasks.populate_venue_coords_mlb", bind=True, max_retries=1)
+def populate_venue_coords_mlb(self: Any) -> dict:
+    """One-time: populate lat/lon for all 30 MLB venues from known coords dict."""
+    from src.ingest.mlb.weather import populate_venue_coords
+
+    with sync_session_factory() as session:
+        updated = populate_venue_coords(session)
+        session.commit()
+    log.info("populate_venue_coords.done", updated=updated)
+    return {"updated": updated}
+
+
+@shared_task(name="src.tasks.ingest_tasks.backfill_weather_mlb", bind=True, max_retries=1)
+def backfill_weather_mlb(self: Any, season_from: int = 2022) -> dict:
+    """Backfill historical game-time weather for all final MLB games via Open-Meteo archive."""
+    from src.ingest.mlb.weather import ingest_weather_historical
+
+    with sync_session_factory() as session:
+        result = ingest_weather_historical(session, season_from=season_from)
+        session.commit()
+    return {"inserted": result.rows_inserted, "errors": len(result.errors)}
+
+
 @shared_task(name="src.tasks.ingest_tasks.ingest_mlb_weather", bind=True, max_retries=2)
 def ingest_mlb_weather(self: Any) -> dict:
     """Fetch weather forecasts for upcoming MLB outdoor games."""
