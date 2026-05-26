@@ -81,6 +81,20 @@ MLB_WINNER_FEATURES = [
     "away_bullpen_pitches_last3d",
     "bullpen_rest_diff",
     "bullpen_pitch_diff",
+    # ── SP rest days ──────────────────────────────────────────────────────────
+    "home_sp_rest_days",
+    "away_sp_rest_days",
+    "sp_rest_diff",
+    # ── Weather (MLB outdoor parks) ───────────────────────────────────────────
+    "weather_temp_f",
+    "weather_wind_mph",
+    "weather_wind_bearing",
+    "weather_precip_prob",
+    "weather_wind_out_factor",
+    # ── Opponent quality (strength-of-schedule proxy) ─────────────────────────
+    "home_opp_quality_last10",
+    "away_opp_quality_last10",
+    "opp_quality_diff",
     # ── Matchup / cross features ──────────────────────────────────────────────
     "elo_diff",
     "elo_home_win_prob",
