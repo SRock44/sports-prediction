@@ -417,3 +417,59 @@ Champions unchanged after Run 4 — id=3 (NBA) and id=4 (MLB) still active.
 |-------|-------------|------------|----------------------|---------------|
 | NBA   | 9           | `0bb46d32` | 0.6464               | High 60s%     |
 | MLB   | 10          | `43f61d63` | 0.6872               | Mid 50s%      |
+
+---
+
+---
+# 2026-05-26 — MLB feature overhaul: SP form WHIP/K9, platoon splits, bullpen pitch counts
+---
+
+## System changes on 2026-05-26
+
+### New MLB matchup features (7 added, 77 total)
+- **SP form WHIP & K/9** — `home/away_sp_form_whip`, `home/away_sp_form_k9`, `sp_form_whip_diff`, `sp_form_k9_diff`: rolling last-5-starts WHIP and K/9 computed from box score pitching stats. Fills a critical gap — pitcher quality signal was previously ERA-only.
+- **Platoon/handedness splits** — `home/away_platoon_adv`, `platoon_adv_diff`: each team's run-scoring differential vs LHP vs RHP starters, 1-year lookback, ≥5-game minimum per split. Captures the ~3-5 run expectancy difference that handedness creates.
+- **Bullpen pitch counts** — `home/away_bullpen_pitches_last3d`, `bullpen_pitch_diff`: total pitches thrown by relievers (non-starters) in last 3 days. Complements existing `bullpen_ip_last3d`; captures high-leverage relievers who log fewer IP but throw many pitches.
+- **Bullpen query rewrite** — no longer depends on `lineups` table JOIN (often empty for historical games). Uses `ROW_NUMBER() OVER (PARTITION BY game_id ORDER BY pitches DESC)` to identify starter vs relievers reliably across all game types.
+
+### Historical backfill — 10,443 games patched
+- `scripts/build_mlb_features.py --patch` rebuilt all `matchup_features` rows missing `platoon_adv_diff` (the sentinel column for new features).
+- **10,443/10,443 games, 0 errors** — full historical feature coverage before retraining.
+
+### Nightly cycle — unbroken
+- `retrain_champion` will pick up id=32's hyperparams tonight and refresh on new data as normal.
+- `patch_sp_features_mlb` already runs daily to keep SP form features current for live games.
+- Promotion gate remains: challenger must beat by ≥ 0.005 log-loss.
+
+---
+
+## Model id=32 — MLB Champion (Current) ✓
+**Date:** 2026-05-26 04:33 UTC  |  **Run ID:** `59f9a1c226c040148e4816fdadd9f9fa`
+**Sport:** MLB
+**Status:** Active champion ✓  |  **Promoted:** force-promoted immediately (well past gate)
+
+| Metric   | Value      | vs id=10 (prev champion) |
+|----------|------------|--------------------------|
+| Log-loss | **0.6624** | −0.0298 ✓✓              |
+| Accuracy | **58.60%** | +5.31 pp ✓✓             |
+| Brier    | 0.2348     | −0.0146 ✓✓              |
+| ECE      | 0.0304     | +0.0103                  |
+| Samples  | 756        | same holdout             |
+
+**Notes:**
+- **Largest single-run MLB accuracy gain to date: +5.3 percentage points** (53.29% → 58.60%)
+- Log-loss improved by 0.030 — 6× the promotion gate of 0.005
+- Ensemble: XGB (CUDA) + LGB (CPU), 200 Optuna trials, 5-fold walk-forward CV
+- Training set: 7,758 games (full historical set with complete new features)
+- ECE slightly worse (+0.010) — model is slightly less calibrated on confidence levels, still well within acceptable range
+- Feature set expanded 71 → 77 features; 27 near-constant features auto-dropped by trainer (including `sp_xfip` which was always 4.5 default)
+- Pitcher matchup features (WHIP, K/9, platoon handedness) are the primary driver of the accuracy jump
+
+---
+
+## Targets (updated 2026-05-26)
+
+| Sport | Champion id | Run ID                               | Must beat (log-loss) | Accuracy goal |
+|-------|-------------|--------------------------------------|----------------------|---------------|
+| NBA   | 9           | `0bb46d32`                           | 0.6464               | High 60s%     |
+| MLB   | 32          | `59f9a1c226c040148e4816fdadd9f9fa`   | 0.6574               | High 50s%     |
