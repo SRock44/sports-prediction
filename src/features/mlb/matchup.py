@@ -80,6 +80,9 @@ def build_matchup_features(
     matchup["elo_diff"] = home_elo - away_elo
     matchup["elo_home_win_prob"] = 1.0 / (1.0 + 10.0 ** (-(home_elo + 50.0 - away_elo) / 400.0))
     matchup["run_diff_diff_last10"] = home_feats["run_diff_last10"] - away_feats["run_diff_last10"]
+    matchup["opp_quality_diff"] = (
+        home_feats["opp_quality_last10"] - away_feats["opp_quality_last10"]
+    )
     matchup["run_diff_diff_last5"] = home_feats["run_diff_last5"] - away_feats["run_diff_last5"]
     matchup["woba_diff_last10"] = home_feats["woba_last10"] - away_feats["woba_last10"]
     matchup["rest_diff"] = home_feats["rest_days"] - away_feats["rest_days"]

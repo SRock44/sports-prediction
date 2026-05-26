@@ -127,6 +127,9 @@ def build_team_features(
     feats["bullpen_ip_last3d"] = bp_ip
     feats["bullpen_pitches_last3d"] = bp_pitches
 
+    # Opponent quality: avg win% of last 10 opponents (strength-of-schedule proxy)
+    feats["opp_quality_last10"] = _get_opp_quality_last10(session, team_id, as_of_utc)
+
     return feats
 
 
@@ -194,6 +197,7 @@ def _fill_defaults(feats: dict[str, Any]) -> None:
     feats["three_in_four"] = 0
     feats["bullpen_ip_last3d"] = 0.0
     feats["bullpen_pitches_last3d"] = 0.0
+    feats["opp_quality_last10"] = 0.5
 
 
 def _compute_streak(won: list[int]) -> int:
@@ -212,3 +216,46 @@ def _compute_streak(won: list[int]) -> int:
 def _games_in_window(dates_desc: list[datetime], as_of: datetime, days: int) -> int:
     cutoff = as_of - timedelta(days=days)
     return sum(1 for d in dates_desc if d >= cutoff)
+
+
+def _get_opp_quality_last10(session: Session, team_id: int, as_of_utc: datetime) -> float:
+    """Avg win% of the team's last 10 opponents (60-day window before each matchup)."""
+    try:
+        result = session.execute(
+            text("""
+                WITH recent_games AS (
+                    SELECT
+                        CASE WHEN g.home_team_id = :tid THEN g.away_team_id
+                             ELSE g.home_team_id END AS opp_id,
+                        g.scheduled_utc AS game_date
+                    FROM games g
+                    WHERE (g.home_team_id = :tid OR g.away_team_id = :tid)
+                      AND g.scheduled_utc < :as_of
+                      AND g.status = 'final'
+                      AND g.home_score IS NOT NULL
+                    ORDER BY g.scheduled_utc DESC
+                    LIMIT 10
+                ),
+                opp_win_pcts AS (
+                    SELECT
+                        AVG(CASE
+                            WHEN (g2.home_team_id = rg.opp_id AND g2.home_score > g2.away_score)
+                              OR (g2.away_team_id = rg.opp_id AND g2.away_score > g2.home_score)
+                            THEN 1.0 ELSE 0.0 END) AS win_pct
+                    FROM recent_games rg
+                    JOIN games g2
+                        ON (g2.home_team_id = rg.opp_id OR g2.away_team_id = rg.opp_id)
+                    WHERE g2.scheduled_utc < rg.game_date
+                      AND g2.scheduled_utc >= rg.game_date - INTERVAL '60 days'
+                      AND g2.status = 'final'
+                      AND g2.home_score IS NOT NULL
+                    GROUP BY rg.opp_id
+                )
+                SELECT COALESCE(AVG(win_pct), 0.5) AS opp_quality
+                FROM opp_win_pcts
+            """),
+            {"tid": team_id, "as_of": as_of_utc},
+        ).scalar()
+        return float(result) if result is not None else 0.5
+    except Exception:
+        return 0.5
