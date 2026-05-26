@@ -155,7 +155,7 @@ def ingest_weather_historical(session: Session, season_from: int = 2022) -> Inge
     existing_ids = {gw.game_id for gw in session.query(GameWeather.game_id).all()}
 
     # Group by (venue_abbrev, date) to batch API calls
-    venue_date_games: dict[tuple, list] = defaultdict(list)
+    venue_date_games: dict[tuple[str, str, float, float], list[Game]] = defaultdict(list)
     for game in games:
         if game.id in existing_ids:
             continue

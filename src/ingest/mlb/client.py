@@ -102,7 +102,7 @@ def get_transactions(start_date: str, end_date: str) -> list[dict[str, Any]]:
     _sleep()
     resp = _requests.get(
         "https://statsapi.mlb.com/api/v1/transactions",
-        params={"startDate": start_date, "endDate": end_date, "sportId": 1},
+        params={"startDate": start_date, "endDate": end_date, "sportId": "1"},
         timeout=15,
     )
     resp.raise_for_status()
