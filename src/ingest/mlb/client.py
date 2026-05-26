@@ -141,3 +141,41 @@ def get_batting_stats(season: int) -> Any:
 def get_pitching_stats(season: int) -> Any:
     """FanGraphs pitching leaderboard (xFIP, SIERA, K-BB%, etc.)."""
     return pybaseball.pitching_stats(season, qual=10)
+
+
+@retry(
+    retry=retry_if_exception_type(requests.exceptions.RequestException),
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=1, min=2, max=30),
+    reraise=True,
+)
+def get_probable_pitchers(game_pk: int) -> dict[str, Any]:
+    """Return probable pitcher data for a scheduled game.
+
+    Returns {"home": {...pitcher dict...}, "away": {...}} or empty dicts if unannounced.
+    Pitcher dict has keys: id (external), fullName, pitchHand.
+    """
+    _sleep()
+    data = statsapi.get(
+        "schedule",
+        {"gamePk": game_pk, "sportId": 1, "hydrate": "probablePitcher"},
+    )
+    dates = data.get("dates", [])
+    if not dates:
+        return {"home": {}, "away": {}}
+    games = dates[0].get("games", [])
+    if not games:
+        return {"home": {}, "away": {}}
+    teams = games[0].get("teams", {})
+    return {
+        "home": teams.get("home", {}).get("probablePitcher", {}),
+        "away": teams.get("away", {}).get("probablePitcher", {}),
+    }
+
+
+def get_player_info(player_id: int) -> dict[str, Any]:
+    """Return person record for a single player (includes pitchHand, batSide)."""
+    _sleep()
+    data = statsapi.get("people", {"personIds": player_id})
+    people = data.get("people", [])
+    return people[0] if people else {}
