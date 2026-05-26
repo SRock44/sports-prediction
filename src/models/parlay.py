@@ -263,16 +263,23 @@ def _fetch_candidate_legs(
         home_conf = abs(model_home_prob - 0.5)
         away_conf = abs(1.0 - model_home_prob - 0.5)
 
-        # Pick the side the model favors most; apply risk-level thresholds
-        if model_home_prob >= 0.5:
+        # Pick the side with the best qualifying edge — not necessarily the
+        # model's favorite. A model_prob of 0.54 with DK at -220 means the
+        # away team at +175 is the +EV side, even though home is "favored".
+        home_qualifies = home_conf >= rl.min_conf and home_edge >= rl.min_edge
+        away_qualifies = away_conf >= rl.min_conf and away_edge >= rl.min_edge
+
+        if not home_qualifies and not away_qualifies:
+            continue
+
+        use_home = home_edge >= away_edge if home_qualifies and away_qualifies else home_qualifies
+
+        if use_home:
             pick_side, pick_conf, pick_edge = "home", home_conf, home_edge
             pick_prob, pick_implied, pick_odds = model_home_prob, home_implied, home_odds
         else:
             pick_side, pick_conf, pick_edge = "away", away_conf, away_edge
             pick_prob, pick_implied, pick_odds = (1.0 - model_home_prob, away_implied, away_odds)
-
-        if pick_conf < rl.min_conf or pick_edge < rl.min_edge:
-            continue
 
         legs.append(
             ParlayLeg(
