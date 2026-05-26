@@ -112,6 +112,9 @@ def build_matchup_features(
     matchup["sp_form_k_pct_diff"] = matchup.get("home_sp_form_k_pct", 0.22) - matchup.get(
         "away_sp_form_k_pct", 0.22
     )
+    matchup["sp_rest_diff"] = matchup.get("home_sp_rest_days", 5.0) - matchup.get(
+        "away_sp_rest_days", 5.0
+    )
 
     # Platoon splits: each team's avg runs vs LHP vs RHP starters
     home_vs_hand = _team_batting_vs_handedness(session, home_team_id, as_of)
@@ -286,13 +289,14 @@ def _sp_rolling_form(
         f"{prefix}_form_k_pct": 0.22,
         f"{prefix}_form_bb_pct": 0.08,
         f"{prefix}_form_known": 0,
+        f"{prefix}_rest_days": 5.0,
     }
     if player_id is None:
         return defaults
     try:
         result = session.execute(
             text("""
-                SELECT pgs.stats->'pitching' AS pit
+                SELECT pgs.stats->'pitching' AS pit, g.scheduled_utc AS game_date
                 FROM player_game_stats pgs
                 JOIN games g ON g.id = pgs.game_id
                 WHERE pgs.player_id = :pid
@@ -304,9 +308,21 @@ def _sp_rolling_form(
             """),
             {"pid": player_id, "as_of": as_of, "n": n_starts},
         )
-        rows = [r.pit for r in result if r.pit]
+        raw_rows = list(result)
+        rows = [r.pit for r in raw_rows if r.pit]
         if not rows:
             return defaults
+
+        # Rest days since most recent start
+        from datetime import UTC as _UTC
+
+        last_start = raw_rows[0].game_date
+        if hasattr(last_start, "tzinfo") and last_start.tzinfo is None:
+            last_start = last_start.replace(tzinfo=_UTC)
+        as_of_aware = (
+            as_of if (hasattr(as_of, "tzinfo") and as_of.tzinfo) else as_of.replace(tzinfo=_UTC)
+        )
+        sp_rest_days = min((as_of_aware - last_start).total_seconds() / 86400, 10.0)
 
         eras, whips, k9s, k_pcts, bb_pcts = [], [], [], [], []
         for pit in rows:
@@ -344,6 +360,7 @@ def _sp_rolling_form(
             f"{prefix}_form_k_pct": rolling_mean(k_pcts, n_starts) or 0.22,
             f"{prefix}_form_bb_pct": rolling_mean(bb_pcts, n_starts) or 0.08,
             f"{prefix}_form_known": int(bool(eras)),
+            f"{prefix}_rest_days": sp_rest_days,
         }
     except Exception:
         return defaults
