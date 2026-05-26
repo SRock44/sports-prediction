@@ -3,6 +3,9 @@
 Two entry points:
   select_top_picks()   — daily automated 10-pick list (1-leg each)
   build_parlay()       — user-requested N-leg parlay (1 / 3 / 5)
+
+Risk levels control confidence thresholds and leg counts for /predict.
+Sorting is confidence-first (model_prob) — edge is a filter, not the rank signal.
 """
 
 from __future__ import annotations
@@ -20,13 +23,56 @@ from src.db.models import Game, GameOdds, ModelRecord, Prediction, Sport
 
 log = get_logger(__name__)
 
-# Minimum model edge over book implied probability to include a leg
-_MIN_EDGE = 0.04
-# Higher bar when picking the side the model de-favors (book mispricing, not model conviction).
-_MIN_EDGE_CONTRA = 0.06
-# Minimum absolute confidence (model prob distance from 50%) per sport.
-# MLB probabilities cluster near 50% — 3% is still meaningful confidence.
-_MIN_CONF: dict[str, float] = {"nba": 0.07, "mlb": 0.03}
+
+# ── Risk levels ───────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class RiskLevel:
+    name: str
+    emoji: str
+    min_conf: float  # minimum abs(model_prob - 0.5) — how far from a coin flip
+    min_edge: float  # minimum model prob minus book implied prob
+    n_legs: int  # default leg count for this risk tier
+    description: str
+
+
+RISK_LEVELS: dict[str, RiskLevel] = {
+    "safe": RiskLevel(
+        name="SAFE",
+        emoji="🟢",
+        min_conf=0.18,
+        min_edge=0.05,
+        n_legs=1,
+        description="High-conviction only · 68%+ model · 1 leg",
+    ),
+    "standard": RiskLevel(
+        name="STANDARD",
+        emoji="🟡",
+        min_conf=0.10,
+        min_edge=0.03,
+        n_legs=3,
+        description="Balanced confidence + value · 60%+ model · 3 legs",
+    ),
+    "aggressive": RiskLevel(
+        name="AGGRESSIVE",
+        emoji="🔴",
+        min_conf=0.05,
+        min_edge=0.01,
+        n_legs=5,
+        description="Wider net · 55%+ model · 5 legs",
+    ),
+    "degen": RiskLevel(
+        name="DEGEN",
+        emoji="💀",
+        min_conf=0.02,
+        min_edge=0.0,
+        n_legs=5,
+        description="Max legs · any edge · 52%+ model · 5 legs",
+    ),
+}
+
+DEFAULT_RISK = "standard"
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -123,8 +169,14 @@ def _fetch_candidate_legs(
     sport_code: str,
     bookmaker: str,
     hours_ahead: int = 36,
+    risk: str = DEFAULT_RISK,
 ) -> list[ParlayLeg]:
-    """Return all scoreable legs for upcoming games, ranked by edge."""
+    """Return qualifying legs for upcoming games, ranked by model confidence.
+
+    Sorting: model_prob descending (conviction first), edge as tiebreaker.
+    Edge is a *filter* not the primary rank signal — the model's belief in who
+    wins takes precedence over book mispricing.
+    """
     now = utc_now()
     window_end = now + timedelta(hours=hours_ahead)
 
@@ -162,6 +214,7 @@ def _fetch_candidate_legs(
         .all()
     )
 
+    rl = RISK_LEVELS.get(risk, RISK_LEVELS[DEFAULT_RISK])
     legs: list[ParlayLeg] = []
 
     for game in games:
@@ -188,7 +241,6 @@ def _fetch_candidate_legs(
             .first()
         )
         if odds_row is None or odds_row.home_price is None or odds_row.away_price is None:
-            # Fall back to any available bookmaker if preferred not found
             odds_row = (
                 session.query(GameOdds)
                 .filter_by(game_id=game.id, market="h2h")
@@ -206,58 +258,41 @@ def _fetch_candidate_legs(
         home_team = game.home_team.name if game.home_team else f"Home {game.id}"
         away_team = game.away_team.name if game.away_team else f"Away {game.id}"
 
-        # Decide pick: whichever side has the larger positive edge
         home_edge = model_home_prob - home_implied
         away_edge = (1.0 - model_home_prob) - away_implied
+        home_conf = abs(model_home_prob - 0.5)
+        away_conf = abs(1.0 - model_home_prob - 0.5)
 
-        min_conf = _MIN_CONF.get(sport_code.lower(), 0.05)
-        model_favors_home = model_home_prob >= 0.5 + min_conf
-        model_favors_away = (1.0 - model_home_prob) >= 0.5 + min_conf
+        # Pick the side the model favors most; apply risk-level thresholds
+        if model_home_prob >= 0.5:
+            pick_side, pick_conf, pick_edge = "home", home_conf, home_edge
+            pick_prob, pick_implied, pick_odds = model_home_prob, home_implied, home_odds
+        else:
+            pick_side, pick_conf, pick_edge = "away", away_conf, away_edge
+            pick_prob, pick_implied, pick_odds = (1.0 - model_home_prob, away_implied, away_odds)
 
-        home_qualifies = home_edge >= _MIN_EDGE and (
-            model_favors_home or home_edge >= _MIN_EDGE_CONTRA
-        )
-        away_qualifies = away_edge >= _MIN_EDGE and (
-            model_favors_away or away_edge >= _MIN_EDGE_CONTRA
-        )
+        if pick_conf < rl.min_conf or pick_edge < rl.min_edge:
+            continue
 
-        if home_edge >= away_edge and home_qualifies:
-            legs.append(
-                ParlayLeg(
-                    game_id=game.id,
-                    sport_code=sport_code,
-                    home_team=home_team,
-                    away_team=away_team,
-                    scheduled_utc=game.scheduled_utc,
-                    pick="home",
-                    model_prob=model_home_prob,
-                    implied_prob=home_implied,
-                    odds_american=home_odds,
-                    bookmaker=odds_row.bookmaker,
-                    edge=home_edge,
-                    confidence=abs(model_home_prob - 0.5),
-                )
+        legs.append(
+            ParlayLeg(
+                game_id=game.id,
+                sport_code=sport_code,
+                home_team=home_team,
+                away_team=away_team,
+                scheduled_utc=game.scheduled_utc,
+                pick=pick_side,
+                model_prob=pick_prob,
+                implied_prob=pick_implied,
+                odds_american=pick_odds,
+                bookmaker=odds_row.bookmaker,
+                edge=pick_edge,
+                confidence=pick_conf,
             )
-        elif away_edge > home_edge and away_qualifies:
-            legs.append(
-                ParlayLeg(
-                    game_id=game.id,
-                    sport_code=sport_code,
-                    home_team=home_team,
-                    away_team=away_team,
-                    scheduled_utc=game.scheduled_utc,
-                    pick="away",
-                    model_prob=1.0 - model_home_prob,
-                    implied_prob=away_implied,
-                    odds_american=away_odds,
-                    bookmaker=odds_row.bookmaker,
-                    edge=away_edge,
-                    confidence=abs(model_home_prob - 0.5),
-                )
-            )
+        )
 
-    # Sort by edge desc (best value first), then confidence as tiebreak
-    legs.sort(key=lambda x: (x.edge, x.confidence), reverse=True)
+    # Sort by model confidence (conviction) first, edge as tiebreaker
+    legs.sort(key=lambda x: (x.model_prob, x.edge), reverse=True)
     return legs
 
 
@@ -405,15 +440,16 @@ def build_parlay(
     sport_code: str,
     bookmaker: str,
     n_legs: int,
+    risk: str = DEFAULT_RISK,
 ) -> Parlay | None:
-    """Build an N-leg parlay from the top-confidence, best-edge games.
+    """Build an N-leg parlay ranked by model confidence.
 
-    Returns None if there aren't enough qualifying legs.
+    Returns None if there aren't enough qualifying legs at the given risk level.
     """
     if n_legs not in (1, 3, 5):
         raise ValueError(f"n_legs must be 1, 3, or 5 — got {n_legs}")
 
-    legs = _fetch_candidate_legs(session, sport_code, bookmaker)
+    legs = _fetch_candidate_legs(session, sport_code, bookmaker, risk=risk)
 
     if len(legs) < n_legs:
         log.info(
