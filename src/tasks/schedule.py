@@ -39,6 +39,11 @@ BEAT_SCHEDULE = {
         "task": "src.tasks.ingest_tasks.patch_sp_features_mlb",
         "schedule": crontab(hour=9, minute=30),  # 4:30 AM EST
     },
+    # ── MLB probable starter patch (7:35 AM EST / 12:35 PM UTC — after rebuild, before score) ─
+    "patch-probable-starters-mlb": {
+        "task": "src.tasks.ingest_tasks.patch_probable_starters_mlb",
+        "schedule": crontab(hour=12, minute=35),  # 7:35 AM EST
+    },
     # ── Injury reports (6:00 AM EST / 11:00 AM UTC) ───────────────────────────
     "refresh-nba-injuries": {
         "task": "src.tasks.ingest_tasks.refresh_nba_injuries",

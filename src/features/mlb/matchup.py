@@ -190,8 +190,8 @@ def _get_confirmed_starter(
     row = session.execute(
         text("""
             SELECT players FROM lineups
-            WHERE game_id = :gid AND team_id = :tid AND source = 'official'
-            ORDER BY fetched_at DESC LIMIT 1
+            WHERE game_id = :gid AND team_id = :tid AND source IN ('official', 'probable')
+            ORDER BY (source = 'official') DESC, fetched_at DESC LIMIT 1
         """),
         {"gid": game_id, "tid": team_id},
     ).first()

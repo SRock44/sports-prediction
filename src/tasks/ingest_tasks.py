@@ -180,6 +180,192 @@ def patch_sp_features_mlb(self: Any) -> dict:
     return {"patched": patched, "skipped": skipped}
 
 
+@shared_task(name="src.tasks.ingest_tasks.patch_probable_starters_mlb", bind=True, max_retries=2)
+def patch_probable_starters_mlb(self: Any) -> dict:
+    """Fetch MLB probable pitchers for upcoming games and store in lineups table.
+
+    Creates a lineups row (source='probable') so _get_confirmed_starter returns the
+    actual starter during scoring instead of defaulting all SP features to 4.50 ERA.
+    Runs after rebuild_features (12:35 UTC) so matchup_features already exist;
+    scoring at 13:00 UTC picks up the real pitcher when build_matchup_features is called.
+    """
+    import json
+    from datetime import timedelta
+
+    from sqlalchemy import text
+
+    from src.core.time import utc_now
+    from src.db.models import Game, Player, Sport
+    from src.ingest.mlb.client import get_player_info, get_probable_pitchers
+
+    now = utc_now()
+    patched = skipped = 0
+
+    with sync_session_factory() as session:
+        sport = session.query(Sport).filter_by(code="mlb").first()
+        if sport is None:
+            return {"patched": 0, "skipped": 0}
+
+        upcoming = (
+            session.query(Game)
+            .filter(
+                Game.sport_id == sport.id,
+                Game.scheduled_utc >= now,
+                Game.scheduled_utc <= now + timedelta(hours=36),
+                Game.status.in_(["scheduled", "pre-game"]),
+            )
+            .all()
+        )
+
+        for game in upcoming:
+            try:
+                probable = get_probable_pitchers(int(game.external_id))
+                for side, team_id in [("home", game.home_team_id), ("away", game.away_team_id)]:
+                    pitcher_data = probable.get(side, {})
+                    if not pitcher_data or not pitcher_data.get("id"):
+                        skipped += 1
+                        continue
+
+                    ext_id = str(pitcher_data["id"])
+                    player = (
+                        session.query(Player)
+                        .filter_by(sport_id=sport.id, external_id=ext_id)
+                        .first()
+                    )
+                    if player is None:
+                        # Fetch full person info to get pitchHand
+                        person = get_player_info(int(ext_id))
+                        pitch_hand = person.get("pitchHand", {}).get("code", "R")
+                        player = Player(
+                            sport_id=sport.id,
+                            external_id=ext_id,
+                            full_name=pitcher_data.get("fullName", ext_id),
+                            primary_position="SP",
+                            throws=pitch_hand,
+                            meta={},
+                        )
+                        session.add(player)
+                        session.flush()
+                    elif player.throws is None:
+                        person = get_player_info(int(ext_id))
+                        pitch_hand = person.get("pitchHand", {}).get("code")
+                        if pitch_hand:
+                            player.throws = pitch_hand
+                        session.flush()
+
+                    # Upsert probable lineup row
+                    existing = session.execute(
+                        text("""
+                            SELECT id FROM lineups
+                            WHERE game_id = :gid AND team_id = :tid AND source = 'probable'
+                        """),
+                        {"gid": game.id, "tid": team_id},
+                    ).first()
+
+                    players_payload = [
+                        {
+                            "player_id": player.id,
+                            "throws": player.throws or "R",
+                            "position": "SP",
+                            "batting_order": 0,
+                        }
+                    ]
+
+                    if existing:
+                        session.execute(
+                            text("""
+                                UPDATE lineups SET players = CAST(:players AS jsonb), fetched_at = NOW()
+                                WHERE game_id = :gid AND team_id = :tid AND source = 'probable'
+                            """),
+                            {
+                                "players": json.dumps(players_payload),
+                                "gid": game.id,
+                                "tid": team_id,
+                            },
+                        )
+                    else:
+                        session.execute(
+                            text("""
+                                INSERT INTO lineups (game_id, team_id, source, players, fetched_at)
+                                VALUES (:gid, :tid, 'probable', CAST(:players AS jsonb), NOW())
+                            """),
+                            {
+                                "players": json.dumps(players_payload),
+                                "gid": game.id,
+                                "tid": team_id,
+                            },
+                        )
+                    patched += 1
+            except Exception as exc:
+                log.warning("patch_probable_starters.error", game_id=game.id, error=str(exc))
+                skipped += 1
+
+        session.commit()
+
+    log.info("patch_probable_starters.done", patched=patched, skipped=skipped)
+    return {"patched": patched, "skipped": skipped}
+
+
+@shared_task(name="src.tasks.ingest_tasks.backfill_pitcher_throws_mlb", bind=True, max_retries=1)
+def backfill_pitcher_throws_mlb(self: Any) -> dict:
+    """One-time backfill: populate players.throws for all MLB pitchers where it is NULL.
+
+    Calls the MLB Stats API people endpoint in batches of 100.
+    Safe to re-run: only updates rows where throws IS NULL.
+    """
+    from src.db.models import Player, Sport
+    from src.ingest.mlb.client import _sleep
+
+    updated = skipped = 0
+
+    with sync_session_factory() as session:
+        sport = session.query(Sport).filter_by(code="mlb").first()
+        if sport is None:
+            return {"updated": 0, "skipped": 0}
+
+        null_pitchers = (
+            session.query(Player)
+            .filter(
+                Player.sport_id == sport.id,
+                Player.throws.is_(None),
+            )
+            .all()
+        )
+        log.info("backfill_throws.start", count=len(null_pitchers))
+
+        import requests as _requests
+
+        batch_size = 100
+        for i in range(0, len(null_pitchers), batch_size):
+            batch = null_pitchers[i : i + batch_size]
+            ids_str = ",".join(p.external_id for p in batch)
+            try:
+                _sleep()
+                resp = _requests.get(
+                    "https://statsapi.mlb.com/api/v1/people",
+                    params={"personIds": ids_str},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                people = resp.json().get("people", [])
+                lookup = {str(p["id"]): p.get("pitchHand", {}).get("code") for p in people}
+                for player in batch:
+                    hand = lookup.get(player.external_id)
+                    if hand:
+                        player.throws = hand
+                        updated += 1
+                    else:
+                        skipped += 1
+            except Exception as exc:
+                log.warning("backfill_throws.batch_error", start=i, error=str(exc))
+                skipped += len(batch)
+
+        session.commit()
+
+    log.info("backfill_throws.done", updated=updated, skipped=skipped)
+    return {"updated": updated, "skipped": skipped}
+
+
 @shared_task(name="src.tasks.ingest_tasks.refresh_nba_injuries", bind=True, max_retries=2)
 def refresh_nba_injuries(self: Any) -> dict:
     from src.ingest.nba.players import ingest_injury_report
