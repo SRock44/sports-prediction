@@ -90,13 +90,23 @@ def get_roster(team_id: int, season: int) -> list[dict[str, Any]]:
     reraise=True,
 )
 def get_transactions(start_date: str, end_date: str) -> list[dict[str, Any]]:
-    """IL moves and transactions in date range."""
+    """IL moves and transactions in date range.
+
+    Uses a direct HTTP request instead of statsapi.get() because the mlb-statsapi
+    library validates required params client-side before making the HTTP call, and
+    its endpoint definition for 'transactions' doesn't recognize startDate/endDate
+    as a valid required-param set, raising a false validation error.
+    """
+    import requests as _requests
+
     _sleep()
-    data = statsapi.get(
-        "transactions",
-        {"startDate": start_date, "endDate": end_date, "sportId": 1},
+    resp = _requests.get(
+        "https://statsapi.mlb.com/api/v1/transactions",
+        params={"startDate": start_date, "endDate": end_date, "sportId": 1},
+        timeout=15,
     )
-    return data.get("transactions", [])  # type: ignore[no-any-return]
+    resp.raise_for_status()
+    return resp.json().get("transactions", [])  # type: ignore[no-any-return]
 
 
 def get_all_teams(season: int) -> list[dict[str, Any]]:
