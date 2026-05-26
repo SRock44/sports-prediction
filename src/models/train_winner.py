@@ -169,6 +169,20 @@ def train_winner_model(
     """Train calibrated ensemble model. Returns (mlflow_run_id, metrics_dict)."""
     lam = _LAMBDA.get(sport, 0.25)
 
+    # Ensure all expected feature columns exist — new features added to the config
+    # won't be present in older matchup_features rows. Fill with 0.0 (neutral).
+    # The near-constant filter below will drop them if they're still nearly all 0.
+    training_df = training_df.reindex(
+        columns=list(training_df.columns)
+        + [f for f in feature_names if f not in training_df.columns],
+        fill_value=0.0,
+    )
+    holdout_df = holdout_df.reindex(
+        columns=list(holdout_df.columns)
+        + [f for f in feature_names if f not in holdout_df.columns],
+        fill_value=0.0,
+    )
+
     # Drop near-constant features — catches empty odds/lineup tables where every
     # row has the same hardcoded default, which adds noise rather than signal.
     feat_stds = training_df[feature_names].std()
