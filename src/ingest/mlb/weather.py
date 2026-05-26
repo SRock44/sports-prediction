@@ -175,8 +175,8 @@ def ingest_weather_historical(session: Session, season_from: int = 2022) -> Inge
             resp = requests.get(
                 _OPEN_METEO_ARCHIVE_URL,
                 params={
-                    "latitude": lat,
-                    "longitude": lon,
+                    "latitude": str(lat),
+                    "longitude": str(lon),
                     "hourly": "temperature_2m,windspeed_10m,winddirection_10m,precipitation_probability,weathercode",
                     "temperature_unit": "fahrenheit",
                     "windspeed_unit": "mph",
