@@ -31,7 +31,7 @@ from src.models.registry import log_model_run
 
 log = get_logger(__name__)
 
-_LAMBDA = {"nba": 0.30, "mlb": 0.20}
+_LAMBDA = {"nba": 0.30, "mlb": 0.50}
 
 try:
     import lightgbm as lgb
