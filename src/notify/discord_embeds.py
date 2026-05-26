@@ -16,10 +16,17 @@ def _prob_bar(p: float, width: int = 12) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
-def build_parlay_embed(parlay: Parlay, sport: str, requested_by: str) -> dict[str, Any]:
+def build_parlay_embed(
+    parlay: Parlay, sport: str, requested_by: str, risk_level: Any = None
+) -> dict[str, Any]:
     """Rich embed for an N-leg parlay returned by /predict."""
+    from src.models.parlay import DEFAULT_RISK, RISK_LEVELS
+
     sport_emoji = "🏀" if sport == "nba" else "⚾"
     color = 0x1D82B6 if sport == "nba" else 0xE8473F
+
+    rl = risk_level or RISK_LEVELS[DEFAULT_RISK]
+    risk_badge = f"{rl.emoji} {rl.name}"
 
     win_pct = parlay.win_probability * 100
     ev = parlay.ev_per_100
@@ -30,7 +37,7 @@ def build_parlay_embed(parlay: Parlay, sport: str, requested_by: str) -> dict[st
     implied = american_to_implied(parlay.parlay_odds_american)
 
     lines: list[str] = [
-        f"**{parlay.n_legs}-Leg Parlay**  ·  {sport.upper()}  ·  {combined_odds}",
+        f"**{parlay.n_legs}-Leg Parlay**  ·  {sport.upper()}  ·  {combined_odds}  ·  {risk_badge}",
         f"Book implied: {implied:.1%}  ·  Model win prob: **{win_pct:.1%}**",
         f"{ev_color} EV per $100: **{ev_str}**",
         "",
@@ -46,8 +53,9 @@ def build_parlay_embed(parlay: Parlay, sport: str, requested_by: str) -> dict[st
             if hasattr(leg.scheduled_utc, "strftime")
             else ""
         )
+        conf_icon = "🟢" if leg.model_prob >= 0.68 else "🟡" if leg.model_prob >= 0.60 else "⚪"
         lines += [
-            f"**Leg {i}:** {pick_team} to beat {opp_team}",
+            f"**Leg {i}:** {conf_icon} {pick_team} to beat {opp_team}",
             f"`{bar}` **{leg.model_prob:.0%}**  ·  {_odds_str(leg.odds_american)}  ({leg.bookmaker})",
             f"Edge: **{leg.edge:+.1%}**  ·  _{sched}_",
             "",
@@ -66,8 +74,12 @@ def build_parlay_embed(parlay: Parlay, sport: str, requested_by: str) -> dict[st
     }
 
 
-def build_single_pick_embed(leg: ParlayLeg, sport: str, requested_by: str) -> dict[str, Any]:
+def build_single_pick_embed(
+    leg: ParlayLeg, sport: str, requested_by: str, risk_level: Any = None
+) -> dict[str, Any]:
     """Embed for a 1-leg straight bet from /predict."""
+    from src.models.parlay import DEFAULT_RISK, RISK_LEVELS
+
     sport_emoji = "🏀" if sport == "nba" else "⚾"
     color = 0x1D82B6 if sport == "nba" else 0xE8473F
     pick_team = leg.home_team if leg.pick == "home" else leg.away_team
@@ -84,11 +96,15 @@ def build_single_pick_embed(leg: ParlayLeg, sport: str, requested_by: str) -> di
         - (1 - leg.model_prob)
     ) * 100
 
+    rl = risk_level or RISK_LEVELS[DEFAULT_RISK]
+    risk_badge = f"{rl.emoji} {rl.name}"
+    conf_icon = "🟢" if leg.model_prob >= 0.68 else "🟡" if leg.model_prob >= 0.60 else "⚪"
+
     return {
-        "title": f"{sport_emoji} Straight Pick",
+        "title": f"{sport_emoji} Straight Pick  ·  {risk_badge}",
         "description": "\n".join(
             [
-                f"**{pick_team}** to beat **{opp_team}**",
+                f"{conf_icon} **{pick_team}** to beat **{opp_team}**",
                 f"`{bar}` **{leg.model_prob:.0%}** model confidence",
                 f"Odds: **{_odds_str(leg.odds_american)}** ({leg.bookmaker})",
                 f"Book implied: {leg.implied_prob:.1%}  ·  Edge: **{leg.edge:+.1%}**",

@@ -5,7 +5,7 @@ from __future__ import annotations
 import discord
 
 from src.core.logging import get_logger
-from src.models.parlay import Parlay, ParlayLeg
+from src.models.parlay import DEFAULT_RISK, RISK_LEVELS, Parlay, ParlayLeg
 
 log = get_logger(__name__)
 
@@ -53,17 +53,50 @@ class SportSelectView(discord.ui.View):
         self, interaction: discord.Interaction, select: discord.ui.Select
     ) -> None:
         sport = select.values[0]
-        view = ParlayTypeView(sport=sport)
+        view = RiskSelectView(sport=sport)
         await interaction.response.edit_message(
-            content=f"**{sport.upper()}** selected. Pick parlay size:",
+            content=f"**{sport.upper()}** selected — choose your risk level:",
             view=view,
         )
 
 
-class ParlayTypeView(discord.ui.View):
+class RiskSelectView(discord.ui.View):
+    """Step 2 of /predict — user picks risk tolerance before parlay is built."""
+
     def __init__(self, sport: str) -> None:
         super().__init__(timeout=120)
         self.sport = sport
+
+    async def _chose_risk(self, interaction: discord.Interaction, risk_key: str) -> None:
+        rl = RISK_LEVELS[risk_key]
+        view = ParlayTypeView(sport=self.sport, risk=risk_key)
+        await interaction.response.edit_message(
+            content=(f"**{rl.emoji} {rl.name}** — {rl.description}\nPick parlay size:"),
+            view=view,
+        )
+
+    @discord.ui.button(label="🟢 SAFE", style=discord.ButtonStyle.success)
+    async def safe(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._chose_risk(interaction, "safe")
+
+    @discord.ui.button(label="🟡 STANDARD", style=discord.ButtonStyle.primary)
+    async def standard(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._chose_risk(interaction, "standard")
+
+    @discord.ui.button(label="🔴 AGGRESSIVE", style=discord.ButtonStyle.danger)
+    async def aggressive(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._chose_risk(interaction, "aggressive")
+
+    @discord.ui.button(label="💀 DEGEN", style=discord.ButtonStyle.secondary)
+    async def degen(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._chose_risk(interaction, "degen")
+
+
+class ParlayTypeView(discord.ui.View):
+    def __init__(self, sport: str, risk: str = DEFAULT_RISK) -> None:
+        super().__init__(timeout=120)
+        self.sport = sport
+        self.risk = risk
 
     async def _generate(self, interaction: discord.Interaction, n_legs: int) -> None:
         await interaction.response.defer(ephemeral=True)
@@ -77,13 +110,13 @@ class ParlayTypeView(discord.ui.View):
         )
 
         sport = self.sport
+        risk = self.risk
         user_id = str(interaction.user.id)
         already_locked = _locked_game_ids(user_id)
 
         try:
             with get_sync_session() as session:
-                # Build from legs not yet locked by this user
-                all_legs = _fetch_candidate_legs(session, sport, "draftkings")
+                all_legs = _fetch_candidate_legs(session, sport, "draftkings", risk=risk)
                 fresh_legs = [leg for leg in all_legs if leg.game_id not in already_locked]
 
                 if len(fresh_legs) < n_legs:
@@ -123,11 +156,12 @@ class ParlayTypeView(discord.ui.View):
             return
 
         requested_by = interaction.user.display_name
+        rl = RISK_LEVELS[risk]
 
         if n_legs == 1:
-            embed_dict = build_single_pick_embed(parlay.legs[0], sport, requested_by)
+            embed_dict = build_single_pick_embed(parlay.legs[0], sport, requested_by, risk_level=rl)
         else:
-            embed_dict = build_parlay_embed(parlay, sport, requested_by)
+            embed_dict = build_parlay_embed(parlay, sport, requested_by, risk_level=rl)
 
         confirm_view = ConfirmParlayView(parlay=parlay, sport=sport)
         await interaction.followup.send(
@@ -300,9 +334,13 @@ class KirkovaView(discord.ui.View):
             odds_str = f"+{leg.odds_american}" if leg.odds_american > 0 else str(leg.odds_american)
             lines.append(f"• **{pick_team}** ({odds_str}) vs {opp_team}")
         preview = "\n".join(lines)
-        await interaction.response.edit_message(
-            content=f"**{len(selected)} pick(s) selected:**\n{preview}\n\nClick 🔒 to lock these in.",
-            view=self,
+        # Defer without editing the main message — editing resets the dropdown to blank.
+        # Send the selection preview as a private followup so the dropdown stays intact.
+        await interaction.response.defer(ephemeral=True)
+        await interaction.followup.send(
+            f"**{len(selected)} pick(s) queued:**\n{preview}\n\n"
+            "Click **🔒 Lock Selected** above to confirm.",
+            ephemeral=True,
         )
 
     @discord.ui.button(
