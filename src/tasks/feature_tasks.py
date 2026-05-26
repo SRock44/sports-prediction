@@ -102,6 +102,75 @@ def _rebuild_features(sport_code: str) -> dict[str, Any]:
     return {"sport": sport_code, "built": built, "errors": errors}
 
 
+@shared_task(name="src.tasks.feature_tasks.backfill_features_mlb", bind=True, max_retries=1)
+def backfill_features_mlb(self: Any, season_from: int = 2022) -> dict[str, Any]:
+    """Recompute matchup_features for all historical final MLB games.
+
+    Used after adding new features to ensure the full training set has real values
+    instead of 0.0 fill-value defaults. One-off task; not in beat schedule.
+    """
+    built = 0
+    errors = 0
+
+    with get_sync_session() as session:
+        from sqlalchemy import text
+
+        sport = session.query(Sport).filter_by(code="mlb").first()
+        if sport is None:
+            return {"built": 0, "errors": 0}
+
+        rows = session.execute(
+            text("""
+                SELECT g.id, g.external_id, g.scheduled_utc
+                FROM games g
+                JOIN matchup_features mf ON mf.game_id = g.id
+                WHERE g.sport_id = :sid
+                  AND g.status = 'final'
+                  AND g.home_score IS NOT NULL
+                  AND g.season >= :season_from
+                ORDER BY g.scheduled_utc
+            """),
+            {"sid": sport.id, "season_from": season_from},
+        ).fetchall()
+
+        log.info("backfill_features.start", sport="mlb", total=len(rows))
+
+        for _i, row in enumerate(rows):
+            game = session.query(Game).get(row.id)
+            if game is None:
+                continue
+            try:
+                as_of = as_of_for_game(row.scheduled_utc)
+                features = _compute_matchup_features(session, "mlb", game, as_of)
+                if features is None:
+                    errors += 1
+                    continue
+
+                existing = session.query(MatchupFeature).filter_by(game_id=game.id).first()
+                if existing:
+                    existing.features = features
+                    existing.computed_at = utc_now()
+                else:
+                    session.add(
+                        MatchupFeature(game_id=game.id, features=features, computed_at=utc_now())
+                    )
+
+                built += 1
+                if built % 200 == 0:
+                    session.commit()
+                    log.info(
+                        "backfill_features.progress", built=built, errors=errors, total=len(rows)
+                    )
+            except Exception as exc:
+                errors += 1
+                log.warning("backfill_features.error", game_id=row.id, error=str(exc))
+
+        session.commit()
+
+    log.info("backfill_features.done", sport="mlb", built=built, errors=errors)
+    return {"built": built, "errors": errors}
+
+
 def _compute_matchup_features(
     session: Session,
     sport_code: str,
