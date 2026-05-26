@@ -256,6 +256,7 @@ def ingest_box_score(session: Session, game_pk: str) -> IngestResult:
                 .filter_by(sport_id=sport.id, external_id=player_id_ext)
                 .first()
             )
+            pitch_hand = p_data.get("pitchHand", {}).get("code")
             if player is None:
                 player = Player(
                     sport_id=sport.id,
@@ -263,11 +264,13 @@ def ingest_box_score(session: Session, game_pk: str) -> IngestResult:
                     full_name=person.get("fullName", player_id_ext),
                     primary_position=p_data.get("position", {}).get("abbreviation"),
                     bats=p_data.get("batSide", {}).get("code"),
-                    throws=p_data.get("pitchHand", {}).get("code"),
+                    throws=pitch_hand,
                     meta={},
                 )
                 session.add(player)
                 session.flush()
+            elif player.throws is None and pitch_hand:
+                player.throws = pitch_hand
 
             if team is None:
                 log.warning(
