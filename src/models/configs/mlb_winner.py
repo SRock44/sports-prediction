@@ -47,20 +47,40 @@ MLB_WINNER_FEATURES = [
     "away_bb_pct_last15",
     "away_win_pct_last10",
     "away_rest_days",
-    # ── Starting pitcher rolling form (last 4 starts before game) ─────────────
-    # sp_xfip/k_bb_pct are excluded — always 4.5/0.10 defaults (no pre-game xFIP feed).
-    # sp_form_* are computed from box-score stats of prior starts — populated after
-    # the backfill rebuilds matchup_features using post-game SP identification.
+    # ── Starting pitcher rolling form (last 5 starts before game) ───────────
+    # sp_xfip/k_bb_pct excluded — always 4.5/0.10 defaults (no pre-game xFIP feed).
+    # sp_form_* computed from box-score stats of prior starts.
+    # WHIP and K/9 added 2026-05-25 — more complete pitcher quality signal.
     "home_sp_form_era",
+    "home_sp_form_whip",
+    "home_sp_form_k9",
     "home_sp_form_k_pct",
     "home_sp_form_bb_pct",
     "home_sp_form_known",
+    "home_sp_handedness",
     "away_sp_form_era",
+    "away_sp_form_whip",
+    "away_sp_form_k9",
     "away_sp_form_k_pct",
     "away_sp_form_bb_pct",
     "away_sp_form_known",
+    "away_sp_handedness",
     "sp_form_era_diff",
+    "sp_form_whip_diff",
+    "sp_form_k9_diff",
     "sp_form_k_pct_diff",
+    # ── Platoon splits — team batting performance vs LHP vs RHP ──────────────
+    # platoon_adv > 0 means team scores more than its avg vs this game's SP hand.
+    "home_platoon_adv",
+    "away_platoon_adv",
+    "platoon_adv_diff",
+    # ── Bullpen fatigue ───────────────────────────────────────────────────────
+    "home_bullpen_ip_last3d",
+    "away_bullpen_ip_last3d",
+    "home_bullpen_pitches_last3d",
+    "away_bullpen_pitches_last3d",
+    "bullpen_rest_diff",
+    "bullpen_pitch_diff",
     # ── Matchup / cross features ──────────────────────────────────────────────
     "elo_diff",
     "elo_home_win_prob",

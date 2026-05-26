@@ -95,7 +95,7 @@ def build_matchup_features(
     matchup.update(_pitcher_features(away_sp, prefix="away_sp"))
     matchup["sp_xfip_diff"] = matchup.get("home_sp_xfip", 4.0) - matchup.get("away_sp_xfip", 4.0)
 
-    # SP rolling form: last 3 starts ERA, K%, BB%
+    # SP rolling form: last 5 starts ERA, WHIP, K/9, K%, BB%
     home_sp_id = home_sp.get("playerId") or home_sp.get("player_id") if home_sp else None
     away_sp_id = away_sp.get("playerId") or away_sp.get("player_id") if away_sp else None
     matchup.update(_sp_rolling_form(session, home_sp_id, as_of, prefix="home_sp"))
@@ -103,8 +103,35 @@ def build_matchup_features(
     matchup["sp_form_era_diff"] = matchup.get("home_sp_form_era", 4.50) - matchup.get(
         "away_sp_form_era", 4.50
     )
+    matchup["sp_form_whip_diff"] = matchup.get("home_sp_form_whip", 1.30) - matchup.get(
+        "away_sp_form_whip", 1.30
+    )
+    matchup["sp_form_k9_diff"] = matchup.get("home_sp_form_k9", 8.0) - matchup.get(
+        "away_sp_form_k9", 8.0
+    )
     matchup["sp_form_k_pct_diff"] = matchup.get("home_sp_form_k_pct", 0.22) - matchup.get(
         "away_sp_form_k_pct", 0.22
+    )
+
+    # Platoon splits: each team's avg runs vs LHP vs RHP starters
+    home_vs_hand = _team_batting_vs_handedness(session, home_team_id, as_of)
+    away_vs_hand = _team_batting_vs_handedness(session, away_team_id, as_of)
+    # Positive platoon_adv = team scores MORE than average vs this game's opponent SP type
+    away_sp_is_lhp = int(matchup.get("away_sp_handedness", 0))
+    home_sp_is_lhp = int(matchup.get("home_sp_handedness", 0))
+    home_expected = home_vs_hand["lhp_runs"] if away_sp_is_lhp else home_vs_hand["rhp_runs"]
+    away_expected = away_vs_hand["lhp_runs"] if home_sp_is_lhp else away_vs_hand["rhp_runs"]
+    matchup["home_platoon_adv"] = home_expected - home_vs_hand["avg_runs"]
+    matchup["away_platoon_adv"] = away_expected - away_vs_hand["avg_runs"]
+    matchup["platoon_adv_diff"] = matchup["home_platoon_adv"] - matchup["away_platoon_adv"]
+
+    # Bullpen fatigue — individual team values + differential
+    matchup["home_bullpen_ip_last3d"] = home_feats.get("bullpen_ip_last3d", 0.0)
+    matchup["away_bullpen_ip_last3d"] = away_feats.get("bullpen_ip_last3d", 0.0)
+    matchup["home_bullpen_pitches_last3d"] = home_feats.get("bullpen_pitches_last3d", 0.0)
+    matchup["away_bullpen_pitches_last3d"] = away_feats.get("bullpen_pitches_last3d", 0.0)
+    matchup["bullpen_pitch_diff"] = (
+        matchup["away_bullpen_pitches_last3d"] - matchup["home_bullpen_pitches_last3d"]
     )
 
     # ── Head-to-head ──────────────────────────────────────────────────────────
@@ -249,11 +276,13 @@ def _sp_rolling_form(
     player_id: int | str | None,
     as_of: datetime,
     prefix: str,
-    n_starts: int = 4,
+    n_starts: int = 5,
 ) -> dict[str, Any]:
-    """Last N starts ERA, K%, BB% for a starting pitcher."""
+    """Last N starts ERA, WHIP, K/9, K%, BB% for a starting pitcher."""
     defaults = {
         f"{prefix}_form_era": 4.50,
+        f"{prefix}_form_whip": 1.30,
+        f"{prefix}_form_k9": 8.0,
         f"{prefix}_form_k_pct": 0.22,
         f"{prefix}_form_bb_pct": 0.08,
         f"{prefix}_form_known": 0,
@@ -279,20 +308,28 @@ def _sp_rolling_form(
         if not rows:
             return defaults
 
-        eras, k_pcts, bb_pcts = [], [], []
+        eras, whips, k9s, k_pcts, bb_pcts = [], [], [], [], []
         for pit in rows:
             er = pit.get("earnedRuns") or pit.get("earnedRunsAllowed")
             ip = pit.get("inningsPitched")
             k = pit.get("strikeOuts")
             bb = pit.get("baseOnBalls") or pit.get("walks")
+            h = pit.get("hits") or pit.get("hitsAllowed")
             bf = pit.get("battersFaced") or pit.get("pitchesThrown")
 
-            if er is not None and ip:
+            if ip:
                 ip_actual = _parse_ip(ip)
                 # Require at least 2 actual innings to avoid relief-appearance noise
                 if ip_actual >= 2.0:
-                    era = float(er) * 9.0 / ip_actual
-                    eras.append(min(era, 27.0))  # cap at 27 ERA to limit outlier impact
+                    if er is not None:
+                        era = float(er) * 9.0 / ip_actual
+                        eras.append(min(era, 27.0))
+                    if h is not None and bb is not None:
+                        whip = (float(h) + float(bb)) / ip_actual
+                        whips.append(min(whip, 4.0))
+                    if k is not None:
+                        k9s.append(float(k) * 9.0 / ip_actual)
+
             if k is not None and bf and float(bf) > 0:
                 k_pcts.append(float(k) / float(bf))
             if bb is not None and bf and float(bf) > 0:
@@ -302,10 +339,89 @@ def _sp_rolling_form(
 
         return {
             f"{prefix}_form_era": rolling_mean(eras, n_starts) or 4.50,
+            f"{prefix}_form_whip": rolling_mean(whips, n_starts) or 1.30,
+            f"{prefix}_form_k9": rolling_mean(k9s, n_starts) or 8.0,
             f"{prefix}_form_k_pct": rolling_mean(k_pcts, n_starts) or 0.22,
             f"{prefix}_form_bb_pct": rolling_mean(bb_pcts, n_starts) or 0.08,
             f"{prefix}_form_known": int(bool(eras)),
         }
+    except Exception:
+        return defaults
+
+
+def _team_batting_vs_handedness(
+    session: Session,
+    team_id: int,
+    as_of: datetime,
+    lookback_days: int = 365,
+) -> dict[str, float]:
+    """Avg runs scored per game vs LHP vs RHP starters over the past year.
+
+    Returns {"lhp_runs": float, "rhp_runs": float, "avg_runs": float}.
+    Starter identified as the opponent pitcher with >=50 pitches thrown (most thrown).
+    Requires at least 5 games per split; falls back to 4.5 otherwise.
+    """
+    from datetime import timedelta
+
+    since = as_of - timedelta(days=lookback_days)
+    defaults = {"lhp_runs": 4.5, "rhp_runs": 4.5, "avg_runs": 4.5}
+    try:
+        rows = session.execute(
+            text("""
+                WITH opp_starters AS (
+                    SELECT DISTINCT ON (pgs.game_id)
+                        pgs.game_id,
+                        pgs.team_id AS pitching_team_id,
+                        pl.throws AS sp_hand
+                    FROM player_game_stats pgs
+                    JOIN players pl ON pl.id = pgs.player_id
+                    WHERE pgs.stats->'pitching' IS NOT NULL
+                      AND pgs.stats->'pitching' != '{}'::jsonb
+                      AND pl.throws IS NOT NULL
+                      AND COALESCE((pgs.stats->'pitching'->>'numberOfPitches')::float, 0) >= 50
+                    ORDER BY
+                        pgs.game_id,
+                        (pgs.stats->'pitching'->>'numberOfPitches')::float DESC
+                ),
+                team_batting AS (
+                    SELECT
+                        g.id AS game_id,
+                        CASE WHEN g.home_team_id = :tid THEN g.home_score
+                             ELSE g.away_score END AS runs,
+                        CASE WHEN g.home_team_id = :tid THEN g.away_team_id
+                             ELSE g.home_team_id END AS opp_team_id
+                    FROM games g
+                    WHERE (g.home_team_id = :tid OR g.away_team_id = :tid)
+                      AND g.status = 'final'
+                      AND g.home_score IS NOT NULL
+                      AND g.scheduled_utc < :as_of
+                      AND g.scheduled_utc >= :since
+                )
+                SELECT os.sp_hand, AVG(tb.runs) AS avg_runs, COUNT(*) AS n
+                FROM team_batting tb
+                JOIN opp_starters os
+                    ON os.game_id = tb.game_id
+                   AND os.pitching_team_id = tb.opp_team_id
+                GROUP BY os.sp_hand
+            """),
+            {"tid": team_id, "as_of": as_of, "since": since},
+        ).fetchall()
+
+        result = dict(defaults)
+        total_runs, total_n = 0.0, 0
+        for row in rows:
+            n = int(row.n)
+            avg = float(row.avg_runs)
+            if n >= 5:
+                if row.sp_hand == "L":
+                    result["lhp_runs"] = avg
+                elif row.sp_hand == "R":
+                    result["rhp_runs"] = avg
+            total_runs += avg * n
+            total_n += n
+        if total_n > 0:
+            result["avg_runs"] = total_runs / total_n
+        return result
     except Exception:
         return defaults
 

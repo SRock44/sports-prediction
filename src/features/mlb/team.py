@@ -122,46 +122,59 @@ def build_team_features(
     feats["b2b"] = int(rest_days < 1.5)
     feats["three_in_four"] = int(_games_in_window(dates_desc, as_of_utc, days=4) >= 3)
 
-    # Bullpen rest: innings pitched by relievers in last 3 days
-    feats["bullpen_ip_last3d"] = _get_bullpen_usage(session, team_id, as_of_utc, days=3)
+    # Bullpen fatigue: IP and pitch count by relievers in last 3 days
+    bp_ip, bp_pitches = _get_bullpen_usage(session, team_id, as_of_utc, days=3)
+    feats["bullpen_ip_last3d"] = bp_ip
+    feats["bullpen_pitches_last3d"] = bp_pitches
 
     return feats
 
 
-def _get_bullpen_usage(session: Session, team_id: int, as_of_utc: datetime, days: int) -> float:
-    """Total innings pitched by non-starters in the last `days` days."""
+def _get_bullpen_usage(
+    session: Session, team_id: int, as_of_utc: datetime, days: int
+) -> tuple[float, float]:
+    """Total IP and pitches thrown by relievers in last `days` days.
+
+    Identifies the starter per game as the pitcher with the most pitches thrown —
+    more reliable than joining lineups (which are often absent for historical games).
+    Returns (ip, pitches) for relievers only.
+    """
     since = as_of_utc - timedelta(days=days)
     try:
         result = session.execute(
             text("""
-                SELECT COALESCE(SUM(
-                    CASE
-                        WHEN (pgs.stats->'pitching'->>'inningsPitched') IS NOT NULL
-                        THEN (pgs.stats->'pitching'->>'inningsPitched')::float
-                        ELSE 0
-                    END
-                ), 0) AS total_ip
-                FROM player_game_stats pgs
-                JOIN games g ON g.id = pgs.game_id
-                JOIN lineups l ON l.game_id = g.id AND l.team_id = :team_id
-                WHERE pgs.team_id = :team_id
-                  AND g.scheduled_utc >= :since
-                  AND g.scheduled_utc < :as_of
-                  AND g.status = 'final'
-                  AND pgs.stats->'pitching' IS NOT NULL
-                  AND NOT EXISTS (
-                      SELECT 1 FROM jsonb_array_elements(l.players) AS p
-                      WHERE (p->>'position') IN ('SP', 'P')
-                        AND (p->>'batting_order')::int = 0
-                        AND p->>'playerId' = pgs.player_id::text
-                  )
+                WITH pitcher_per_game AS (
+                    SELECT
+                        COALESCE((pgs.stats->'pitching'->>'numberOfPitches')::float, 0) AS pitches,
+                        COALESCE((pgs.stats->'pitching'->>'inningsPitched')::float, 0) AS ip_raw,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY pgs.game_id
+                            ORDER BY
+                                COALESCE((pgs.stats->'pitching'->>'numberOfPitches')::float, 0) DESC
+                        ) AS rn
+                    FROM player_game_stats pgs
+                    JOIN games g ON g.id = pgs.game_id
+                    WHERE pgs.team_id = :team_id
+                      AND g.scheduled_utc >= :since
+                      AND g.scheduled_utc < :as_of
+                      AND g.status = 'final'
+                      AND pgs.stats->'pitching' IS NOT NULL
+                      AND pgs.stats->'pitching' != '{}'::jsonb
+                      AND COALESCE((pgs.stats->'pitching'->>'numberOfPitches')::float, 0) > 0
+                )
+                SELECT
+                    COALESCE(SUM(CASE WHEN rn > 1 THEN ip_raw  ELSE 0 END), 0) AS bp_ip,
+                    COALESCE(SUM(CASE WHEN rn > 1 THEN pitches ELSE 0 END), 0) AS bp_pitches
+                FROM pitcher_per_game
             """),
             {"team_id": team_id, "since": since, "as_of": as_of_utc},
         )
         row = result.first()
-        return float(row.total_ip) if row and row.total_ip else 0.0
+        ip = float(row.bp_ip) if row and row.bp_ip else 0.0
+        pitches = float(row.bp_pitches) if row and row.bp_pitches else 0.0
+        return ip, pitches
     except Exception:
-        return 0.0
+        return 0.0, 0.0
 
 
 def _fill_defaults(feats: dict[str, Any]) -> None:
@@ -180,6 +193,7 @@ def _fill_defaults(feats: dict[str, Any]) -> None:
     feats["b2b"] = 0
     feats["three_in_four"] = 0
     feats["bullpen_ip_last3d"] = 0.0
+    feats["bullpen_pitches_last3d"] = 0.0
 
 
 def _compute_streak(won: list[int]) -> int:

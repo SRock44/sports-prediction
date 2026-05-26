@@ -28,6 +28,11 @@ def main() -> None:
     parser.add_argument(
         "--force", action="store_true", help="Rebuild features even if already present"
     )
+    parser.add_argument(
+        "--patch",
+        action="store_true",
+        help="Only update existing rows missing new columns (platoon_adv_diff, sp_form_whip, etc.)",
+    )
     args = parser.parse_args()
 
     with get_sync_session() as session:
@@ -50,7 +55,26 @@ def main() -> None:
             .all()
         )
 
-        if not args.force:
+        if args.patch:
+            # Only rows already in matchup_features but missing the new columns added 2026-05-25
+            from sqlalchemy import text
+
+            stale_ids = set(
+                row[0]
+                for row in session.execute(
+                    text("""
+                        SELECT mf.game_id FROM matchup_features mf
+                        JOIN games g ON g.id = mf.game_id
+                        WHERE g.sport_id = :sid
+                          AND g.status = 'final'
+                          AND (mf.features->>'platoon_adv_diff') IS NULL
+                    """),
+                    {"sid": sport.id},
+                ).fetchall()
+            )
+            to_process = sorted(stale_ids & games_with_bs)
+            print(f"Patch mode: {len(to_process)} rows missing new features")
+        elif not args.force:
             already_done = set(
                 row[0]
                 for row in session.query(MatchupFeature.game_id)
